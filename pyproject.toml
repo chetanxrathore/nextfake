@@ -36,9 +36,9 @@ pandas = ["pandas>=2.0", "pyarrow>=15"]
 all = ["pydantic>=2.0", "polars>=1.0", "pyarrow>=15", "pandas>=2.0"]
 
 [project.urls]
-Homepage = "https://github.com/nextfake/nextfake"
-Repository = "https://github.com/nextfake/nextfake"
-Issues = "https://github.com/nextfake/nextfake/issues"
+Homepage = "https://github.com/chetanxrathore/nextfake"
+Repository = "https://github.com/chetanxrathore/nextfake"
+Issues = "https://github.com/chetanxrathore/nextfake/issues"
 
 [dependency-groups]
 dev = [

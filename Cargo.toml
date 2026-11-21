@@ -6,7 +6,7 @@ rust-version = "1.85"
 description = "Rust-powered, multi-core synthetic data and schema generator for Python"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/nextfake/nextfake"
+repository = "https://github.com/chetanxrathore/nextfake"
 keywords = ["fake", "synthetic-data", "faker", "arrow", "python"]
 categories = ["development-tools::testing", "simulation"]
 
