@@ -1,0 +1,318 @@
+{
+  "environment": {
+    "cpu": "Apple M2 Max",
+    "logical_cores": 12,
+    "os": "Darwin 25.6.0 (arm64)",
+    "python": "3.13.5",
+    "versions": {
+      "nextfake": "0.1.0",
+      "faker": "40.63.0",
+      "mimesis": "22.2.0",
+      "polyfactory": "3.5.0",
+      "pydantic": "2.14.4",
+      "polars": "2.1.0",
+      "pyarrow": "26.0.1"
+    },
+    "nextfake_debug_build": false,
+    "date": "2026-11-21"
+  },
+  "results": [
+    {
+      "bench": "dicts",
+      "impl": "nextfake",
+      "label": "**nextfake** `to_dicts`",
+      "rows": 100000,
+      "seconds": 0.041071875020861626,
+      "measured_rows": 100000,
+      "runs": [
+        0.14233441703254357,
+        0.0416948749916628,
+        0.041071875020861626,
+        0.04084962501656264,
+        0.040986291016452014
+      ],
+      "peak_rss_mb": 115.828125,
+      "baseline_rss_mb": 33.71875,
+      "extrapolated": false,
+      "notes": []
+    },
+    {
+      "bench": "dicts",
+      "impl": "nextfake_1t",
+      "label": "nextfake (1 thread)",
+      "rows": 100000,
+      "seconds": 0.05627150001237169,
+      "measured_rows": 100000,
+      "runs": [
+        0.157457166002132,
+        0.05627150001237169,
+        0.055524124996736646,
+        0.05818241601809859,
+        0.055643958039581776
+      ],
+      "peak_rss_mb": 123.234375,
+      "baseline_rss_mb": 33.46875,
+      "extrapolated": false,
+      "notes": []
+    },
+    {
+      "bench": "dicts",
+      "impl": "faker",
+      "label": "Faker",
+      "rows": 100000,
+      "seconds": 16.858064458996523,
+      "measured_rows": 100000,
+      "runs": [
+        16.858064458996523
+      ],
+      "peak_rss_mb": 141.453125,
+      "baseline_rss_mb": 96.203125,
+      "extrapolated": false,
+      "notes": []
+    },
+    {
+      "bench": "dicts",
+      "impl": "mimesis",
+      "label": "Mimesis (`Schema.create`)",
+      "rows": 100000,
+      "seconds": 1.4288120829733089,
+      "measured_rows": 100000,
+      "runs": [
+        1.384362249984406,
+        1.4288120829733089,
+        1.4704094580374658
+      ],
+      "peak_rss_mb": 119.484375,
+      "baseline_rss_mb": 66.671875,
+      "extrapolated": false,
+      "notes": []
+    },
+    {
+      "bench": "pydantic",
+      "impl": "nextfake",
+      "label": "**nextfake** `generate`",
+      "rows": 100000,
+      "seconds": 1.8384334580041468,
+      "measured_rows": 100000,
+      "runs": [
+        1.8439462920068763,
+        1.839705208025407,
+        1.824083208979573,
+        1.8384334580041468,
+        1.8312704999698326
+      ],
+      "peak_rss_mb": 250.1875,
+      "baseline_rss_mb": 62.59375,
+      "extrapolated": false,
+      "notes": []
+    },
+    {
+      "bench": "pydantic",
+      "impl": "nextfake_1t",
+      "label": "nextfake (1 thread)",
+      "rows": 100000,
+      "seconds": 1.854033374984283,
+      "measured_rows": 100000,
+      "runs": [
+        1.8552268749917857,
+        1.870865083008539,
+        1.8231781250215136,
+        1.8377594170160592,
+        1.854033374984283
+      ],
+      "peak_rss_mb": 264.3125,
+      "baseline_rss_mb": 60.625,
+      "extrapolated": false,
+      "notes": []
+    },
+    {
+      "bench": "pydantic",
+      "impl": "nextfake_construct",
+      "label": "nextfake `validate=False`",
+      "rows": 100000,
+      "seconds": 0.4101914999773726,
+      "measured_rows": 100000,
+      "runs": [
+        0.41889170795911923,
+        0.41926712496206164,
+        0.4101914999773726,
+        0.39773079100996256,
+        0.4085488339769654
+      ],
+      "peak_rss_mb": 237.78125,
+      "baseline_rss_mb": 60.875,
+      "extrapolated": false,
+      "notes": []
+    },
+    {
+      "bench": "pydantic",
+      "impl": "polyfactory",
+      "label": "Polyfactory (default)",
+      "rows": 100000,
+      "seconds": 39.32380362501135,
+      "measured_rows": 100000,
+      "runs": [
+        39.32380362501135
+      ],
+      "peak_rss_mb": 227.53125,
+      "baseline_rss_mb": 96.125,
+      "extrapolated": false,
+      "notes": []
+    },
+    {
+      "bench": "pydantic",
+      "impl": "polyfactory_faker",
+      "label": "Polyfactory + Faker fields",
+      "rows": 100000,
+      "seconds": 30.952225833025295,
+      "measured_rows": 100000,
+      "runs": [
+        30.952225833025295
+      ],
+      "peak_rss_mb": 223.9375,
+      "baseline_rss_mb": 93.203125,
+      "extrapolated": false,
+      "notes": []
+    },
+    {
+      "bench": "polars",
+      "impl": "nextfake",
+      "label": "**nextfake** `to_polars`",
+      "rows": 1000000,
+      "seconds": 0.04726158396806568,
+      "measured_rows": 1000000,
+      "runs": [
+        0.15162495797267184,
+        0.04726158396806568,
+        0.04637058300431818,
+        0.04907020798418671,
+        0.043503042019438
+      ],
+      "peak_rss_mb": 271.6875,
+      "baseline_rss_mb": 89.3125,
+      "extrapolated": false,
+      "notes": []
+    },
+    {
+      "bench": "polars",
+      "impl": "nextfake_1t",
+      "label": "nextfake (1 thread)",
+      "rows": 1000000,
+      "seconds": 0.20439791702665389,
+      "measured_rows": 1000000,
+      "runs": [
+        0.30805474997032434,
+        0.20845299999928102,
+        0.20280808297684416,
+        0.20293391699669883,
+        0.20439791702665389
+      ],
+      "peak_rss_mb": 441.84375,
+      "baseline_rss_mb": 78.09375,
+      "extrapolated": false,
+      "notes": []
+    },
+    {
+      "bench": "polars",
+      "impl": "faker",
+      "label": "Faker + `pl.DataFrame`",
+      "rows": 1000000,
+      "seconds": 167.34685541014187,
+      "measured_rows": 100000,
+      "runs": [
+        16.734685541014187
+      ],
+      "peak_rss_mb": 187.765625,
+      "baseline_rss_mb": 117.09375,
+      "extrapolated": true,
+      "notes": [
+        "extrapolated linearly from 100,000 rows (16.73s); RSS measured at 100,000 rows"
+      ]
+    },
+    {
+      "bench": "polars",
+      "impl": "mimesis",
+      "label": "Mimesis + `pl.DataFrame`",
+      "rows": 1000000,
+      "seconds": 15.06958199996734,
+      "measured_rows": 1000000,
+      "runs": [
+        15.06958199996734
+      ],
+      "peak_rss_mb": 766.734375,
+      "baseline_rss_mb": 107.609375,
+      "extrapolated": false,
+      "notes": []
+    },
+    {
+      "bench": "parquet",
+      "impl": "nextfake",
+      "label": "**nextfake** `to_parquet`",
+      "rows": 1000000,
+      "seconds": 0.08833358297124505,
+      "measured_rows": 1000000,
+      "runs": [
+        0.18098704202566296,
+        0.08012366597540677,
+        0.07928195898421109,
+        0.08833358297124505,
+        0.08972699998412281
+      ],
+      "peak_rss_mb": 192.125,
+      "baseline_rss_mb": 32.734375,
+      "extrapolated": false,
+      "notes": []
+    },
+    {
+      "bench": "parquet",
+      "impl": "nextfake_1t",
+      "label": "nextfake (1 thread)",
+      "rows": 1000000,
+      "seconds": 0.4324076250195503,
+      "measured_rows": 1000000,
+      "runs": [
+        0.557484959019348,
+        0.4324076250195503,
+        0.4314691670006141,
+        0.4317240830278024,
+        0.43576929200207815
+      ],
+      "peak_rss_mb": 129.578125,
+      "baseline_rss_mb": 32.828125,
+      "extrapolated": false,
+      "notes": []
+    },
+    {
+      "bench": "parquet",
+      "impl": "faker",
+      "label": "Faker -> Polars -> Parquet",
+      "rows": 1000000,
+      "seconds": 174.97366917028558,
+      "measured_rows": 100000,
+      "runs": [
+        17.497366917028558
+      ],
+      "peak_rss_mb": 223.328125,
+      "baseline_rss_mb": 106.109375,
+      "extrapolated": true,
+      "notes": [
+        "extrapolated linearly from 100,000 rows (17.50s); RSS measured at 100,000 rows"
+      ]
+    },
+    {
+      "bench": "parquet",
+      "impl": "mimesis",
+      "label": "Mimesis -> Polars -> Parquet",
+      "rows": 1000000,
+      "seconds": 15.471807125024498,
+      "measured_rows": 1000000,
+      "runs": [
+        15.471807125024498
+      ],
+      "peak_rss_mb": 757.6875,
+      "baseline_rss_mb": 98.65625,
+      "extrapolated": false,
+      "notes": []
+    }
+  ]
+}
