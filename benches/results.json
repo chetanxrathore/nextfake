@@ -22,17 +22,17 @@
       "impl": "nextfake",
       "label": "**nextfake** `to_dicts`",
       "rows": 100000,
-      "seconds": 0.041071875020861626,
+      "seconds": 0.04067741701146588,
       "measured_rows": 100000,
       "runs": [
-        0.14233441703254357,
-        0.0416948749916628,
-        0.041071875020861626,
-        0.04084962501656264,
-        0.040986291016452014
+        0.13652524998178706,
+        0.04007158300373703,
+        0.04065141698811203,
+        0.04067741701146588,
+        0.04069958400214091
       ],
-      "peak_rss_mb": 115.828125,
-      "baseline_rss_mb": 33.71875,
+      "peak_rss_mb": 115.09375,
+      "baseline_rss_mb": 31.546875,
       "extrapolated": false,
       "notes": []
     },
@@ -41,17 +41,17 @@
       "impl": "nextfake_1t",
       "label": "nextfake (1 thread)",
       "rows": 100000,
-      "seconds": 0.05627150001237169,
+      "seconds": 0.05465262499637902,
       "measured_rows": 100000,
       "runs": [
-        0.157457166002132,
-        0.05627150001237169,
-        0.055524124996736646,
-        0.05818241601809859,
-        0.055643958039581776
+        0.14889733301242813,
+        0.055296999984420836,
+        0.05465262499637902,
+        0.05432183400262147,
+        0.05450054199900478
       ],
-      "peak_rss_mb": 123.234375,
-      "baseline_rss_mb": 33.46875,
+      "peak_rss_mb": 105.625,
+      "baseline_rss_mb": 30.484375,
       "extrapolated": false,
       "notes": []
     },
@@ -60,13 +60,13 @@
       "impl": "faker",
       "label": "Faker",
       "rows": 100000,
-      "seconds": 16.858064458996523,
+      "seconds": 16.83823079202557,
       "measured_rows": 100000,
       "runs": [
-        16.858064458996523
+        16.83823079202557
       ],
-      "peak_rss_mb": 141.453125,
-      "baseline_rss_mb": 96.203125,
+      "peak_rss_mb": 113.90625,
+      "baseline_rss_mb": 94.1875,
       "extrapolated": false,
       "notes": []
     },
@@ -75,15 +75,15 @@
       "impl": "mimesis",
       "label": "Mimesis (`Schema.create`)",
       "rows": 100000,
-      "seconds": 1.4288120829733089,
+      "seconds": 1.4396937499986961,
       "measured_rows": 100000,
       "runs": [
-        1.384362249984406,
-        1.4288120829733089,
-        1.4704094580374658
+        1.434359041042626,
+        1.4547864999622107,
+        1.4396937499986961
       ],
-      "peak_rss_mb": 119.484375,
-      "baseline_rss_mb": 66.671875,
+      "peak_rss_mb": 120.40625,
+      "baseline_rss_mb": 68.03125,
       "extrapolated": false,
       "notes": []
     },
@@ -92,17 +92,17 @@
       "impl": "nextfake",
       "label": "**nextfake** `generate`",
       "rows": 100000,
-      "seconds": 1.8384334580041468,
+      "seconds": 1.7866426670225337,
       "measured_rows": 100000,
       "runs": [
-        1.8439462920068763,
-        1.839705208025407,
-        1.824083208979573,
-        1.8384334580041468,
-        1.8312704999698326
+        1.8002598749590106,
+        1.7810457090381533,
+        1.7866426670225337,
+        1.7864821249968372,
+        1.8666697079897858
       ],
-      "peak_rss_mb": 250.1875,
-      "baseline_rss_mb": 62.59375,
+      "peak_rss_mb": 249.3125,
+      "baseline_rss_mb": 59.328125,
       "extrapolated": false,
       "notes": []
     },
@@ -111,17 +111,17 @@
       "impl": "nextfake_1t",
       "label": "nextfake (1 thread)",
       "rows": 100000,
-      "seconds": 1.854033374984283,
+      "seconds": 1.8300403750035912,
       "measured_rows": 100000,
       "runs": [
-        1.8552268749917857,
-        1.870865083008539,
-        1.8231781250215136,
-        1.8377594170160592,
-        1.854033374984283
+        1.8366618329891935,
+        1.8038679579622112,
+        1.8292138340184465,
+        1.8300403750035912,
+        1.8793995840242133
       ],
-      "peak_rss_mb": 264.3125,
-      "baseline_rss_mb": 60.625,
+      "peak_rss_mb": 272.21875,
+      "baseline_rss_mb": 62.0,
       "extrapolated": false,
       "notes": []
     },
@@ -130,17 +130,17 @@
       "impl": "nextfake_construct",
       "label": "nextfake `validate=False`",
       "rows": 100000,
-      "seconds": 0.4101914999773726,
+      "seconds": 0.4002102909726091,
       "measured_rows": 100000,
       "runs": [
-        0.41889170795911923,
-        0.41926712496206164,
-        0.4101914999773726,
-        0.39773079100996256,
-        0.4085488339769654
+        0.4087965419748798,
+        0.3988479169784114,
+        0.3930984580074437,
+        0.4002102909726091,
+        0.40106912498595193
       ],
-      "peak_rss_mb": 237.78125,
-      "baseline_rss_mb": 60.875,
+      "peak_rss_mb": 232.4375,
+      "baseline_rss_mb": 54.828125,
       "extrapolated": false,
       "notes": []
     },
@@ -149,13 +149,13 @@
       "impl": "polyfactory",
       "label": "Polyfactory (default)",
       "rows": 100000,
-      "seconds": 39.32380362501135,
+      "seconds": 40.284021500032395,
       "measured_rows": 100000,
       "runs": [
-        39.32380362501135
+        40.284021500032395
       ],
-      "peak_rss_mb": 227.53125,
-      "baseline_rss_mb": 96.125,
+      "peak_rss_mb": 227.78125,
+      "baseline_rss_mb": 92.65625,
       "extrapolated": false,
       "notes": []
     },
@@ -164,13 +164,13 @@
       "impl": "polyfactory_faker",
       "label": "Polyfactory + Faker fields",
       "rows": 100000,
-      "seconds": 30.952225833025295,
+      "seconds": 29.50402104202658,
       "measured_rows": 100000,
       "runs": [
-        30.952225833025295
+        29.50402104202658
       ],
-      "peak_rss_mb": 223.9375,
-      "baseline_rss_mb": 93.203125,
+      "peak_rss_mb": 209.546875,
+      "baseline_rss_mb": 90.65625,
       "extrapolated": false,
       "notes": []
     },
@@ -179,17 +179,17 @@
       "impl": "nextfake",
       "label": "**nextfake** `to_polars`",
       "rows": 1000000,
-      "seconds": 0.04726158396806568,
+      "seconds": 0.044039250002242625,
       "measured_rows": 1000000,
       "runs": [
-        0.15162495797267184,
-        0.04726158396806568,
-        0.04637058300431818,
-        0.04907020798418671,
-        0.043503042019438
+        0.14480154099874198,
+        0.044958457991015166,
+        0.044039250002242625,
+        0.04362995905103162,
+        0.04239083296852186
       ],
-      "peak_rss_mb": 271.6875,
-      "baseline_rss_mb": 89.3125,
+      "peak_rss_mb": 264.40625,
+      "baseline_rss_mb": 78.71875,
       "extrapolated": false,
       "notes": []
     },
@@ -198,17 +198,17 @@
       "impl": "nextfake_1t",
       "label": "nextfake (1 thread)",
       "rows": 1000000,
-      "seconds": 0.20439791702665389,
+      "seconds": 0.20229958300478756,
       "measured_rows": 1000000,
       "runs": [
-        0.30805474997032434,
-        0.20845299999928102,
-        0.20280808297684416,
-        0.20293391699669883,
-        0.20439791702665389
+        0.2924397499882616,
+        0.1997851250343956,
+        0.2027316659805365,
+        0.20229958300478756,
+        0.1980407919618301
       ],
-      "peak_rss_mb": 441.84375,
-      "baseline_rss_mb": 78.09375,
+      "peak_rss_mb": 356.390625,
+      "baseline_rss_mb": 79.25,
       "extrapolated": false,
       "notes": []
     },
@@ -217,16 +217,16 @@
       "impl": "faker",
       "label": "Faker + `pl.DataFrame`",
       "rows": 1000000,
-      "seconds": 167.34685541014187,
+      "seconds": 161.7933750001248,
       "measured_rows": 100000,
       "runs": [
-        16.734685541014187
+        16.17933750001248
       ],
-      "peak_rss_mb": 187.765625,
-      "baseline_rss_mb": 117.09375,
+      "peak_rss_mb": 163.421875,
+      "baseline_rss_mb": 93.875,
       "extrapolated": true,
       "notes": [
-        "extrapolated linearly from 100,000 rows (16.73s); RSS measured at 100,000 rows"
+        "extrapolated linearly from 100,000 rows (16.18s); RSS measured at 100,000 rows"
       ]
     },
     {
@@ -234,13 +234,13 @@
       "impl": "mimesis",
       "label": "Mimesis + `pl.DataFrame`",
       "rows": 1000000,
-      "seconds": 15.06958199996734,
+      "seconds": 13.581051291024778,
       "measured_rows": 1000000,
       "runs": [
-        15.06958199996734
+        13.581051291024778
       ],
-      "peak_rss_mb": 766.734375,
-      "baseline_rss_mb": 107.609375,
+      "peak_rss_mb": 744.546875,
+      "baseline_rss_mb": 87.265625,
       "extrapolated": false,
       "notes": []
     },
@@ -249,17 +249,17 @@
       "impl": "nextfake",
       "label": "**nextfake** `to_parquet`",
       "rows": 1000000,
-      "seconds": 0.08833358297124505,
+      "seconds": 0.06961629202123731,
       "measured_rows": 1000000,
       "runs": [
-        0.18098704202566296,
-        0.08012366597540677,
-        0.07928195898421109,
-        0.08833358297124505,
-        0.08972699998412281
+        0.159755332977511,
+        0.0690672910423018,
+        0.06669733300805092,
+        0.07039337500464171,
+        0.06961629202123731
       ],
-      "peak_rss_mb": 192.125,
-      "baseline_rss_mb": 32.734375,
+      "peak_rss_mb": 165.109375,
+      "baseline_rss_mb": 31.25,
       "extrapolated": false,
       "notes": []
     },
@@ -268,17 +268,17 @@
       "impl": "nextfake_1t",
       "label": "nextfake (1 thread)",
       "rows": 1000000,
-      "seconds": 0.4324076250195503,
+      "seconds": 0.4365830000024289,
       "measured_rows": 1000000,
       "runs": [
-        0.557484959019348,
-        0.4324076250195503,
-        0.4314691670006141,
-        0.4317240830278024,
-        0.43576929200207815
+        0.5313974170130678,
+        0.4291593339876272,
+        0.43398166698170826,
+        0.4365830000024289,
+        0.4407637499971315
       ],
-      "peak_rss_mb": 129.578125,
-      "baseline_rss_mb": 32.828125,
+      "peak_rss_mb": 142.75,
+      "baseline_rss_mb": 30.515625,
       "extrapolated": false,
       "notes": []
     },
@@ -287,16 +287,16 @@
       "impl": "faker",
       "label": "Faker -> Polars -> Parquet",
       "rows": 1000000,
-      "seconds": 174.97366917028558,
+      "seconds": 165.66508583026007,
       "measured_rows": 100000,
       "runs": [
-        17.497366917028558
+        16.566508583026007
       ],
-      "peak_rss_mb": 223.328125,
-      "baseline_rss_mb": 106.109375,
+      "peak_rss_mb": 213.703125,
+      "baseline_rss_mb": 116.84375,
       "extrapolated": true,
       "notes": [
-        "extrapolated linearly from 100,000 rows (17.50s); RSS measured at 100,000 rows"
+        "extrapolated linearly from 100,000 rows (16.57s); RSS measured at 100,000 rows"
       ]
     },
     {
@@ -304,13 +304,13 @@
       "impl": "mimesis",
       "label": "Mimesis -> Polars -> Parquet",
       "rows": 1000000,
-      "seconds": 15.471807125024498,
+      "seconds": 13.713740250037517,
       "measured_rows": 1000000,
       "runs": [
-        15.471807125024498
+        13.713740250037517
       ],
-      "peak_rss_mb": 757.6875,
-      "baseline_rss_mb": 98.65625,
+      "peak_rss_mb": 751.3125,
+      "baseline_rss_mb": 87.28125,
       "extrapolated": false,
       "notes": []
     }
