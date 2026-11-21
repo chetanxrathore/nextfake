@@ -119,6 +119,12 @@ def test_choice_pattern_and_generic(gen: nextfake.Faker) -> None:
     assert re.fullmatch(r"ORD-[A-Z]{3}-\d{4}", gen.pattern("ORD-???-####"))
     assert gen.value("int", min=1, max=1) == 1
     assert gen.value(nextfake.Constant("k")) == "k"
+    short = gen.values(nextfake.Provider("paragraph").truncate(5).nullable(0.5), 2000)
+    assert all(v is None or len(v) <= 5 for v in short)
+    assert 800 < sum(v is None for v in short) < 1200
+    assert nextfake.Faker(seed=8).values(nextfake.Provider("email"), 50) == nextfake.Faker(
+        seed=8
+    ).values("email", 50)
     with pytest.raises(nextfake.ProviderError):
         gen.value("does_not_exist")
     with pytest.raises(nextfake.ProviderError):

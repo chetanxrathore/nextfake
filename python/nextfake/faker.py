@@ -133,12 +133,10 @@ class Faker:
         """``n`` values from any provider, generated in parallel."""
         n = _check_count(n)
         if isinstance(provider, Spec):
-            return self._engine.values(
-                provider.provider,
-                n,
-                {**provider.params, **params},
-                provider.null_probability or 0.0,
-            )
+            spec = provider.with_params(**params) if params else provider
+            # Same column name (and therefore RNG stream) as ``values("<provider>", n)``.
+            plan = _nf.CompiledPlan([spec.to_column(spec.provider)])
+            return self._engine.columns(plan, n)[spec.provider]
         return self._engine.values(provider, n, params or None)
 
     def _s(self, provider: str, params: dict[str, Any] | None = None) -> str:

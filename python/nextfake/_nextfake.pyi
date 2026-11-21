@@ -8,6 +8,7 @@ __version__: str
 CHUNK_ROWS: int
 PROVIDERS: list[str]
 LOCALES: list[str]
+DEBUG_BUILD: bool
 
 @final
 class CompiledPlan:

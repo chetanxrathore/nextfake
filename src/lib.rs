@@ -49,6 +49,7 @@ mod _nextfake {
         m.add("CHUNK_ROWS", rng::CHUNK_ROWS)?;
         m.add("PROVIDERS", providers::PROVIDER_NAMES.to_vec())?;
         m.add("LOCALES", locales::codes())?;
+        m.add("DEBUG_BUILD", cfg!(debug_assertions))?;
         Ok(())
     }
 
