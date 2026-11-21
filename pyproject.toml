@@ -1,0 +1,91 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "nextfake"
+dynamic = ["version"]
+description = "Rust-powered, multi-core synthetic data & schema generator for Python (Faker-compatible API, Arrow/Polars/Parquet native)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
+keywords = ["faker", "fake", "synthetic data", "test data", "pydantic", "polars", "arrow", "parquet", "rust"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Testing :: Mocking",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.optional-dependencies]
+pydantic = ["pydantic>=2.0"]
+polars = ["polars>=1.0"]
+arrow = ["pyarrow>=15"]
+pandas = ["pandas>=2.0", "pyarrow>=15"]
+all = ["pydantic>=2.0", "polars>=1.0", "pyarrow>=15", "pandas>=2.0"]
+
+[project.urls]
+Homepage = "https://github.com/nextfake/nextfake"
+Repository = "https://github.com/nextfake/nextfake"
+Issues = "https://github.com/nextfake/nextfake/issues"
+
+[dependency-groups]
+dev = [
+    "maturin>=1.7,<2.0",
+    "pytest>=8",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pydantic>=2.0",
+    "email-validator>=2.0",
+    "polars>=1.0",
+    "pyarrow>=15",
+    "pandas>=2.0",
+    "pandas-stubs",
+    "typing_extensions>=4.7",
+]
+bench = ["faker", "mimesis", "polyfactory"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "nextfake._nextfake"
+bindings = "pyo3"
+features = ["python", "pyo3/extension-module"]
+include = [{ path = "LICENSE-MIT", format = "sdist" }, { path = "LICENSE-APACHE", format = "sdist" }]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["python", "tests", "benches"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RUF", "PT", "PIE", "PERF"]
+ignore = ["RUF022"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["PERF"]
+"benches/*" = ["PERF"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unreachable = true
+mypy_path = "python"
+
+[[tool.mypy.overrides]]
+module = ["mimesis.*", "polyfactory.*", "faker.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

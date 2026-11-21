@@ -1,0 +1,15 @@
+/target
+.venv/
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+*.dylib
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+dist/
+*.egg-info/
+benches/_out/
+benches/raw_results.json.tmp
+.envrc.sh

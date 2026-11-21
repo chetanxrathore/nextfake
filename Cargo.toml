@@ -1,0 +1,45 @@
+[package]
+name = "nextfake"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "Rust-powered, multi-core synthetic data and schema generator for Python"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/nextfake/nextfake"
+keywords = ["fake", "synthetic-data", "faker", "arrow", "python"]
+categories = ["development-tools::testing", "simulation"]
+
+[lib]
+name = "_nextfake"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# Python bindings. Enabled by maturin (see pyproject.toml) so that plain
+# `cargo test` / `cargo clippy` exercise the pure-Rust core without linking libpython.
+python = ["dep:pyo3"]
+
+[dependencies]
+pyo3 = { version = "0.30", features = ["abi3-py310"], optional = true }
+rayon = "1.12"
+rand = "0.10"
+rand_chacha = "0.10"
+rand_core = "0.10"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+uuid = { version = "1.29", default-features = false, features = ["std"] }
+arrow-array = { version = "60", features = ["ffi"] }
+arrow-buffer = "60"
+arrow-schema = "60"
+arrow-ipc = { version = "60", default-features = false }
+parquet = { version = "60", default-features = false, features = ["arrow", "zstd", "snap", "lz4", "flate2-zlib-rs"] }
+csv = "1.4"
+serde_json = "1.0"
+itoa = "1.0"
+ryu = "1.0"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+panic = "unwind"
