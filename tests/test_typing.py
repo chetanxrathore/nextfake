@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+from pathlib import Path
 from typing import Any, TypedDict
 
+import pandas as pd
+import polars as pl
 from pydantic import BaseModel
 from typing_extensions import assert_type
 
@@ -65,3 +68,16 @@ def test_provider_methods_are_typed() -> None:
     assert_type(gen.threads, int | None)
     spec: nextfake.Spec = nextfake.Int(1, 2).nullable(0.5)
     assert spec.null_probability == 0.5
+
+
+def test_exporters_are_typed(tmp_path: Path) -> None:
+    gen = nextfake.Faker(seed=3)
+    assert_type(gen.to_polars(User, 5), pl.DataFrame)
+    assert_type(gen.to_pandas(User, 5), pd.DataFrame)
+    assert_type(gen.to_parquet(User, 5, tmp_path / "u.parquet"), Path)
+    assert_type(gen.to_csv(User, 5, str(tmp_path / "u.csv")), Path)
+    assert_type(gen.to_jsonl(User, 5, tmp_path / "u.jsonl"), Path)
+    assert_type(gen.to_arrow_ipc(User, 5), bytes)
+    stream = gen.to_arrow_stream(User, 5)
+    assert_type(stream.num_rows, int)
+    assert_type(nextfake.to_polars(User, 2), pl.DataFrame)

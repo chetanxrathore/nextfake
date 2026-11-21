@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import datetime as _dt
 import functools
+import importlib
+import os
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 
 from nextfake import _nextfake as _nf
 from nextfake.exceptions import MissingDependencyError, SchemaError
@@ -13,6 +16,9 @@ from nextfake.schema import CompiledSchema, KeyMode, compile_schema
 from nextfake.types import Spec
 
 if TYPE_CHECKING:
+    import pandas as pd
+    import polars as pl
+    import pyarrow as pa
     from typing_extensions import Self
 
 __all__ = ["Faker", "get_default", "seed"]
@@ -24,6 +30,8 @@ _U64 = (1 << 64) - 1
 #: Values accepted wherever a schema is expected.
 SchemaLike = Any
 Overrides = Mapping[str, "Spec | str"]
+StrPath = str | os.PathLike[str]
+Compression = Literal["zstd", "snappy", "lz4", "gzip", "none"]
 
 
 def _norm_seed(seed: int | None) -> int | None:
@@ -624,17 +632,177 @@ class Faker:
         cs = self.compile(schema, overrides=overrides, null_probability=null_probability)
         return self._engine.columns(cs.require_flat("to_columns()"), _check_count(count))
 
+    # ------------------------------------------------------------------ columnar & disk export
+
+    def _flat_plan(
+        self,
+        schema: SchemaLike,
+        operation: str,
+        overrides: Overrides | None,
+        null_probability: float | None,
+    ) -> _nf.CompiledPlan:
+        cs = self.compile(schema, overrides=overrides, null_probability=null_probability)
+        return cs.require_flat(operation)
+
+    def to_arrow_stream(
+        self,
+        schema: SchemaLike,
+        count: int,
+        *,
+        overrides: Overrides | None = None,
+        null_probability: float | None = None,
+    ) -> _nf.ArrowStream:
+        """Generate an Arrow PyCapsule stream (``__arrow_c_stream__``).
+
+        Built entirely in Rust with the GIL released; consumable zero-copy by any library that
+        speaks the Arrow PyCapsule interface (pyarrow, polars, duckdb, ...). Needs no
+        optional dependency.
+        """
+        plan = self._flat_plan(schema, "to_arrow_stream()", overrides, null_probability)
+        return self._engine.arrow(plan, _check_count(count))
+
+    def to_arrow(
+        self,
+        schema: SchemaLike,
+        count: int,
+        *,
+        overrides: Overrides | None = None,
+        null_probability: float | None = None,
+    ) -> pa.Table:
+        """Generate a ``pyarrow.Table`` (zero-copy via the Arrow C stream interface)."""
+        pa_mod = _import("pyarrow", "to_arrow()")
+        stream = self.to_arrow_stream(
+            schema, count, overrides=overrides, null_probability=null_probability
+        )
+        return pa_mod.RecordBatchReader.from_stream(stream).read_all()
+
+    def to_arrow_ipc(
+        self,
+        schema: SchemaLike,
+        count: int,
+        *,
+        overrides: Overrides | None = None,
+        null_probability: float | None = None,
+    ) -> bytes:
+        """Generate rows serialized as Arrow IPC *stream* bytes."""
+        plan = self._flat_plan(schema, "to_arrow_ipc()", overrides, null_probability)
+        return self._engine.ipc(plan, _check_count(count))
+
+    def to_polars(
+        self,
+        schema: SchemaLike,
+        count: int,
+        *,
+        overrides: Overrides | None = None,
+        null_probability: float | None = None,
+    ) -> pl.DataFrame:
+        """Generate a ``polars.DataFrame`` (Arrow C stream import, no pyarrow needed)."""
+        pl_mod = _import("polars", "to_polars()")
+        stream = self.to_arrow_stream(
+            schema, count, overrides=overrides, null_probability=null_probability
+        )
+        return cast("pl.DataFrame", pl_mod.DataFrame(stream))
+
+    def to_pandas(
+        self,
+        schema: SchemaLike,
+        count: int,
+        *,
+        overrides: Overrides | None = None,
+        null_probability: float | None = None,
+    ) -> pd.DataFrame:
+        """Generate a ``pandas.DataFrame`` (via pyarrow when installed)."""
+        pd_mod = _import("pandas", "to_pandas()")
+        if _has("pyarrow"):
+            table = self.to_arrow(
+                schema, count, overrides=overrides, null_probability=null_probability
+            )
+            return cast("pd.DataFrame", table.to_pandas())
+        cols = self.to_columns(
+            schema, count, overrides=overrides, null_probability=null_probability
+        )
+        return cast("pd.DataFrame", pd_mod.DataFrame(cols))
+
+    def to_parquet(
+        self,
+        schema: SchemaLike,
+        count: int,
+        path: StrPath,
+        *,
+        compression: Compression | str = "zstd",
+        compression_level: int | None = None,
+        row_group_size: int = 131_072,
+        overrides: Overrides | None = None,
+        null_probability: float | None = None,
+    ) -> Path:
+        """Stream ``count`` rows straight from Rust to a Parquet file.
+
+        Rows are generated and columns encoded/compressed in parallel in bounded waves, so
+        memory stays flat even for many millions of rows. Returns the output path.
+        """
+        plan = self._flat_plan(schema, "to_parquet()", overrides, null_probability)
+        out = Path(path)
+        self._engine.write_parquet(
+            plan, _check_count(count), out, compression, compression_level, row_group_size
+        )
+        return out
+
+    def to_jsonl(
+        self,
+        schema: SchemaLike,
+        count: int,
+        path: StrPath,
+        *,
+        overrides: Overrides | None = None,
+        null_probability: float | None = None,
+    ) -> Path:
+        """Stream ``count`` rows to a JSON Lines file (dates as ISO-8601 strings)."""
+        plan = self._flat_plan(schema, "to_jsonl()", overrides, null_probability)
+        out = Path(path)
+        self._engine.write_jsonl(plan, _check_count(count), out)
+        return out
+
+    def to_csv(
+        self,
+        schema: SchemaLike,
+        count: int,
+        path: StrPath,
+        *,
+        header: bool = True,
+        delimiter: str = ",",
+        overrides: Overrides | None = None,
+        null_probability: float | None = None,
+    ) -> Path:
+        """Stream ``count`` rows to a CSV file (nulls are empty fields)."""
+        plan = self._flat_plan(schema, "to_csv()", overrides, null_probability)
+        out = Path(path)
+        self._engine.write_csv(plan, _check_count(count), out, header, delimiter)
+        return out
+
     def __copy__(self) -> Self:
         raise TypeError("Faker instances hold RNG state and cannot be copied; create a new one")
 
 
-def _require(module: str, feature: str) -> None:
+def _import(module: str, feature: str) -> Any:
     try:
-        __import__(module)
+        return importlib.import_module(module)
     except ImportError as exc:
         raise MissingDependencyError(
             f"{feature} requires the optional dependency {module!r}: pip install {module}"
         ) from exc
+
+
+def _require(module: str, feature: str) -> None:
+    _import(module, feature)
+
+
+@functools.cache
+def _has(module: str) -> bool:
+    try:
+        importlib.import_module(module)
+    except ImportError:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------------------------
@@ -886,4 +1054,103 @@ def to_columns(
     """Module-level shortcut for :meth:`Faker.to_columns`."""
     return get_default().to_columns(
         schema, count, overrides=overrides, null_probability=null_probability
+    )
+
+
+def to_arrow(
+    schema: SchemaLike,
+    count: int,
+    *,
+    overrides: Overrides | None = None,
+    null_probability: float | None = None,
+) -> pa.Table:
+    """Module-level shortcut for :meth:`Faker.to_arrow`."""
+    return get_default().to_arrow(
+        schema, count, overrides=overrides, null_probability=null_probability
+    )
+
+
+def to_polars(
+    schema: SchemaLike,
+    count: int,
+    *,
+    overrides: Overrides | None = None,
+    null_probability: float | None = None,
+) -> pl.DataFrame:
+    """Module-level shortcut for :meth:`Faker.to_polars`."""
+    return get_default().to_polars(
+        schema, count, overrides=overrides, null_probability=null_probability
+    )
+
+
+def to_pandas(
+    schema: SchemaLike,
+    count: int,
+    *,
+    overrides: Overrides | None = None,
+    null_probability: float | None = None,
+) -> pd.DataFrame:
+    """Module-level shortcut for :meth:`Faker.to_pandas`."""
+    return get_default().to_pandas(
+        schema, count, overrides=overrides, null_probability=null_probability
+    )
+
+
+def to_parquet(
+    schema: SchemaLike,
+    count: int,
+    path: StrPath,
+    *,
+    compression: Compression | str = "zstd",
+    compression_level: int | None = None,
+    row_group_size: int = 131_072,
+    overrides: Overrides | None = None,
+    null_probability: float | None = None,
+) -> Path:
+    """Module-level shortcut for :meth:`Faker.to_parquet`."""
+    return get_default().to_parquet(
+        schema,
+        count,
+        path,
+        compression=compression,
+        compression_level=compression_level,
+        row_group_size=row_group_size,
+        overrides=overrides,
+        null_probability=null_probability,
+    )
+
+
+def to_jsonl(
+    schema: SchemaLike,
+    count: int,
+    path: StrPath,
+    *,
+    overrides: Overrides | None = None,
+    null_probability: float | None = None,
+) -> Path:
+    """Module-level shortcut for :meth:`Faker.to_jsonl`."""
+    return get_default().to_jsonl(
+        schema, count, path, overrides=overrides, null_probability=null_probability
+    )
+
+
+def to_csv(
+    schema: SchemaLike,
+    count: int,
+    path: StrPath,
+    *,
+    header: bool = True,
+    delimiter: str = ",",
+    overrides: Overrides | None = None,
+    null_probability: float | None = None,
+) -> Path:
+    """Module-level shortcut for :meth:`Faker.to_csv`."""
+    return get_default().to_csv(
+        schema,
+        count,
+        path,
+        header=header,
+        delimiter=delimiter,
+        overrides=overrides,
+        null_probability=null_probability,
     )

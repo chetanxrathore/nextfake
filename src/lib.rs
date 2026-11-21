@@ -9,6 +9,7 @@ pub mod locales;
 pub mod providers;
 pub mod rng;
 pub mod schema;
+pub mod writers;
 
 /// Crate version, exposed to Python as `nextfake.__version__`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -18,12 +19,18 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 #[pyo3::pymodule(gil_used = false)]
 mod _nextfake {
     use std::collections::HashMap;
+    use std::path::PathBuf;
     use std::sync::{Arc, Mutex, MutexGuard};
 
-    use pyo3::exceptions::{PyKeyError, PyTypeError};
+    use arrow_array::ffi_stream::FFI_ArrowArrayStream;
+    use arrow_array::{RecordBatch, RecordBatchIterator};
+    use arrow_schema::SchemaRef;
+
+    use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyTypeError, PyValueError};
     use pyo3::prelude::*;
     use pyo3::types::{
-        PyBool, PyDate, PyDateTime, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple,
+        PyBool, PyBytes, PyCapsule, PyDate, PyDateTime, PyDict, PyFloat, PyInt, PyList, PyString,
+        PyTuple,
     };
 
     use crate::errors::NfError;
@@ -34,6 +41,7 @@ mod _nextfake {
     };
     use crate::rng::{self, FastRng};
     use crate::schema::{self, ColumnSpec, Plan};
+    use crate::writers::{self, CsvOptions, ParquetOptions};
 
     #[pymodule_init]
     fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -160,6 +168,10 @@ mod _nextfake {
             }
             other => other,
         }
+    }
+
+    fn plan_schema(plan: &Plan) -> SchemaRef {
+        plan.arrow_schema()
     }
 
     fn arrow_type_name(kind: Kind) -> &'static str {
@@ -317,6 +329,75 @@ mod _nextfake {
     }
 
     // -----------------------------------------------------------------------------------------
+    // ArrowStream (Arrow PyCapsule C Stream Interface)
+    // -----------------------------------------------------------------------------------------
+
+    /// Generated Arrow record batches exposed through the Arrow PyCapsule interface
+    /// (``__arrow_c_stream__``), consumable zero-copy by pyarrow, polars, duckdb, ...
+    ///
+    /// The stream can be consumed exactly once.
+    #[pyclass(module = "nextfake._nextfake", name = "ArrowStream", frozen)]
+    pub struct ArrowStream {
+        inner: Mutex<Option<(Vec<RecordBatch>, SchemaRef)>>,
+        num_rows: usize,
+        num_batches: usize,
+        column_names: Vec<String>,
+    }
+
+    #[pymethods]
+    impl ArrowStream {
+        #[pyo3(signature = (requested_schema = None))]
+        fn __arrow_c_stream__<'py>(
+            &self,
+            py: Python<'py>,
+            requested_schema: Option<Bound<'py, PyAny>>,
+        ) -> PyResult<Bound<'py, PyCapsule>> {
+            // The requested schema is advisory; we always produce our own schema.
+            let _ = requested_schema;
+            let (batches, schema) = self
+                .inner
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take()
+                .ok_or_else(|| PyRuntimeError::new_err("ArrowStream was already consumed"))?;
+            let reader = RecordBatchIterator::new(batches.into_iter().map(Ok), schema);
+            let stream = FFI_ArrowArrayStream::new(Box::new(reader));
+            PyCapsule::new_with_value(py, stream, c"arrow_array_stream")
+        }
+
+        /// Total number of rows in the stream.
+        #[getter]
+        fn num_rows(&self) -> usize {
+            self.num_rows
+        }
+
+        /// Number of record batches in the stream.
+        #[getter]
+        fn num_batches(&self) -> usize {
+            self.num_batches
+        }
+
+        /// Column names.
+        #[getter]
+        fn column_names(&self) -> Vec<String> {
+            self.column_names.clone()
+        }
+
+        /// Whether the stream has already been exported.
+        #[getter]
+        fn consumed(&self) -> bool {
+            self.inner
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_none()
+        }
+
+        fn __len__(&self) -> usize {
+            self.num_rows
+        }
+    }
+
+    // -----------------------------------------------------------------------------------------
     // Engine
     // -----------------------------------------------------------------------------------------
 
@@ -391,6 +472,36 @@ mod _nextfake {
             let threads = self.threads;
             let plan = Arc::clone(plan);
             Ok(py.detach(move || schema::install(threads, || plan.generate(count, seed, &ctx)))?)
+        }
+
+        /// Generate Arrow record batches with the GIL released.
+        fn batches(
+            &self,
+            py: Python<'_>,
+            plan: &Arc<Plan>,
+            count: usize,
+        ) -> PyResult<(Vec<RecordBatch>, SchemaRef)> {
+            let (seed, base) = self.next_batch(count);
+            let ctx = self.ctx(base);
+            let threads = self.threads;
+            let schema = plan_schema(plan);
+            let plan = Arc::clone(plan);
+            let batches = py.detach(move || {
+                schema::install(threads, || plan.record_batches(count, seed, &ctx))
+            })??;
+            Ok((batches, schema))
+        }
+
+        /// Run a streaming file writer with the GIL released.
+        fn write_with<F>(&self, py: Python<'_>, count: usize, f: F) -> PyResult<()>
+        where
+            F: FnOnce(u64, &Ctx) -> crate::errors::Result<()> + Send,
+        {
+            let (seed, base) = self.next_batch(count);
+            let ctx = self.ctx(base);
+            let threads = self.threads;
+            py.detach(move || schema::install(threads, || f(seed, &ctx)))??;
+            Ok(())
         }
 
         fn single_column_plan(provider: &str, params: &Params, null_p: f64) -> PyResult<Arc<Plan>> {
@@ -560,6 +671,100 @@ mod _nextfake {
                 out.set_item(&spec.name, PyList::new(py, values)?)?;
             }
             Ok(out)
+        }
+
+        /// Generate ``count`` rows as an Arrow PyCapsule stream (one batch per 16,384 rows).
+        fn arrow(
+            &self,
+            py: Python<'_>,
+            plan: &CompiledPlan,
+            count: usize,
+        ) -> PyResult<ArrowStream> {
+            let (batches, schema) = self.batches(py, &plan.plan, count)?;
+            Ok(ArrowStream {
+                num_rows: batches.iter().map(RecordBatch::num_rows).sum(),
+                num_batches: batches.len(),
+                column_names: schema.fields().iter().map(|f| f.name().clone()).collect(),
+                inner: Mutex::new(Some((batches, schema))),
+            })
+        }
+
+        /// Generate ``count`` rows serialized as Arrow IPC stream bytes.
+        fn ipc<'py>(
+            &self,
+            py: Python<'py>,
+            plan: &CompiledPlan,
+            count: usize,
+        ) -> PyResult<Bound<'py, PyBytes>> {
+            let (batches, schema) = self.batches(py, &plan.plan, count)?;
+            let bytes = py.detach(move || writers::ipc_stream_bytes(&schema, &batches))?;
+            Ok(PyBytes::new(py, &bytes))
+        }
+
+        /// Stream ``count`` rows to a Parquet file (columns encoded in parallel).
+        #[pyo3(signature = (plan, count, path, compression = "zstd", compression_level = None, row_group_size = 131_072))]
+        #[allow(clippy::too_many_arguments)] // mirrors the Python keyword arguments
+        fn write_parquet(
+            &self,
+            py: Python<'_>,
+            plan: &CompiledPlan,
+            count: usize,
+            path: PathBuf,
+            compression: &str,
+            compression_level: Option<i32>,
+            row_group_size: usize,
+        ) -> PyResult<()> {
+            if row_group_size == 0 {
+                return Err(PyValueError::new_err("row_group_size must be >= 1"));
+            }
+            let opts = ParquetOptions {
+                compression: writers::parse_compression(compression, compression_level)?,
+                row_group_size,
+            };
+            let plan = Arc::clone(&plan.plan);
+            self.write_with(py, count, move |seed, ctx| {
+                writers::write_parquet(&plan, count, seed, ctx, &path, &opts)
+            })
+        }
+
+        /// Stream ``count`` rows to a CSV file.
+        #[pyo3(signature = (plan, count, path, header = true, delimiter = ","))]
+        fn write_csv(
+            &self,
+            py: Python<'_>,
+            plan: &CompiledPlan,
+            count: usize,
+            path: PathBuf,
+            header: bool,
+            delimiter: &str,
+        ) -> PyResult<()> {
+            let delimiter = match delimiter.as_bytes() {
+                [b] if b.is_ascii() && *b != b'"' && *b != b'\n' && *b != b'\r' => *b,
+                _ => {
+                    return Err(PyValueError::new_err(
+                        "delimiter must be a single ASCII character other than quote/newline",
+                    ))
+                }
+            };
+            let opts = CsvOptions { header, delimiter };
+            let plan = Arc::clone(&plan.plan);
+            self.write_with(py, count, move |seed, ctx| {
+                writers::write_csv(&plan, count, seed, ctx, &path, &opts)
+            })
+        }
+
+        /// Stream ``count`` rows to a JSON Lines file.
+        fn write_jsonl(
+            &self,
+            py: Python<'_>,
+            plan: &CompiledPlan,
+            count: usize,
+            path: PathBuf,
+        ) -> PyResult<()> {
+            let plan = Arc::clone(&plan.plan);
+            self.write_with(py, count, move |seed, ctx| {
+                writers::write_jsonl(&plan, count, seed, ctx, &path)
+            })
         }
 
         fn __repr__(&self) -> String {

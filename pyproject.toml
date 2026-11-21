@@ -83,7 +83,7 @@ warn_unreachable = true
 mypy_path = "python"
 
 [[tool.mypy.overrides]]
-module = ["mimesis.*", "polyfactory.*", "faker.*"]
+module = ["mimesis.*", "polyfactory.*", "faker.*", "pyarrow.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

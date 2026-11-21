@@ -9,6 +9,8 @@ Quick start::
     gen.emails(3)                  # parallel batch generation
     users = gen.generate(User, count=1_000)          # list[User] (Pydantic / dataclass)
     rows = gen.to_dicts({"id": "int", "email": "email"}, 100_000)
+    df = gen.to_polars(User, 1_000_000)               # built in Rust, zero-copy Arrow
+    gen.to_parquet(User, 5_000_000, "users.parquet")  # streamed to disk, bounded RAM
 """
 
 from nextfake._nextfake import CHUNK_ROWS, LOCALES, PROVIDERS, __version__
@@ -53,8 +55,14 @@ from nextfake.faker import (
     sentence,
     state,
     street_address,
+    to_arrow,
     to_columns,
+    to_csv,
     to_dicts,
+    to_jsonl,
+    to_pandas,
+    to_parquet,
+    to_polars,
     url,
     user_agent,
     username,
@@ -149,8 +157,14 @@ __all__ = [
     "sentence",
     "state",
     "street_address",
+    "to_arrow",
     "to_columns",
+    "to_csv",
     "to_dicts",
+    "to_jsonl",
+    "to_pandas",
+    "to_parquet",
+    "to_polars",
     "url",
     "user_agent",
     "username",
