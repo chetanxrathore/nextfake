@@ -112,10 +112,12 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [linux, musllinux, macos, windows, sdist]
-    environment: pypi
+    environment:
+      name: pypi
+      url: https://pypi.org/p/nextfake
     permissions:
-      id-token: write
-      attestations: write
+      id-token: write # Trusted Publishing + Sigstore signing of the PEP 740 attestations
+      attestations: write # GitHub artifact attestations (`gh attestation verify`)
       contents: read
     steps:
       - uses: actions/download-artifact@v7
@@ -123,10 +125,17 @@ jobs:
           pattern: wheels-*
           merge-multiple: true
           path: dist
-      - uses: actions/attest-build-provenance@v3
+      - name: Check tag matches package version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          ls -l dist
+          ls dist/nextfake-"$version"-*.whl dist/nextfake-"$version".tar.gz > /dev/null
+      - name: GitHub build provenance
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: "dist/*"
-      - uses: PyO3/maturin-action@v1
+      - name: Publish to PyPI with PEP 740 attestations
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          command: upload
-          args: --non-interactive --skip-existing dist/*
+          attestations: true
+          skip-existing: true

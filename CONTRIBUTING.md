@@ -70,6 +70,21 @@ feature (enabled automatically by maturin), so Rust tests never need to link lib
    heuristics in `python/nextfake/schema.py` if appropriate.
 3. Add typed `Faker` methods (single + batch) in `python/nextfake/faker.py`.
 
+## Releasing
+
+Releases are published by `.github/workflows/wheels.yml` when a `v*` tag is pushed: it builds
+manylinux/musllinux (x86_64, aarch64), macOS (x86_64, arm64), Windows x64 wheels and the sdist,
+then uploads them to PyPI via Trusted Publishing with PEP 740 attestations and GitHub build
+provenance (see [SECURITY.md](SECURITY.md#verifying-releases)).
+
+1. Bump `version` in `Cargo.toml` — the single source of truth (the Python package version is
+   read from it by maturin). Run `cargo check` so `Cargo.lock` updates, and run the quality gates.
+2. Commit, then tag the commit: `git tag -a vX.Y.Z -m "nextfake X.Y.Z"` and push the tag.
+3. Approve the `pypi` environment deployment in the Actions run if reviewers are required.
+
+The publish job fails fast if the tag does not match the built version. Re-running a partially
+failed publish is safe (`skip-existing`).
+
 ## Commit messages
 
 Reference the tracking key (e.g. `NXFK-402: ...`) and describe user-visible behaviour changes.

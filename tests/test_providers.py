@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import importlib.metadata
 import ipaddress
 import re
 import uuid
@@ -14,7 +15,9 @@ from tests.helpers import luhn_valid
 
 
 def test_import_and_version() -> None:
-    assert nextfake.__version__ == "0.1.0"
+    # The compiled module and the installed distribution metadata must agree (single source:
+    # Cargo.toml), which also catches a stale `maturin develop` build.
+    assert nextfake.__version__ == importlib.metadata.version("nextfake")
     assert "email" in nextfake.PROVIDERS
     assert set(nextfake.LOCALES) == {"en_US", "en_GB", "de_DE", "fr_FR", "ja_JP"}
 

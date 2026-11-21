@@ -782,6 +782,12 @@ mod _nextfake {
 mod tests {
     #[test]
     fn version_is_set() {
-        assert_eq!(super::VERSION, "0.1.0");
+        let parts: Vec<&str> = super::VERSION.split(['.', '-', '+']).collect();
+        assert!(parts.len() >= 3, "{}", super::VERSION);
+        assert!(
+            parts[..3].iter().all(|p| p.parse::<u64>().is_ok()),
+            "{}",
+            super::VERSION
+        );
     }
 }

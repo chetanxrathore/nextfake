@@ -32,3 +32,24 @@ confirmed issues within 30 days, coordinating disclosure with the reporter.
   paths. Treat output paths derived from untrusted input with the usual care.
 * Unsafe Rust is limited to constructing Arrow buffers whose invariants are established by
   construction (documented `SAFETY` comments) and the Arrow C Data Interface export.
+
+## Verifying releases
+
+Every release is built and published by the `Wheels` GitHub Actions workflow
+(`.github/workflows/wheels.yml`) using PyPI Trusted Publishing — no long-lived API tokens. Each
+wheel and the sdist carry two independent, Sigstore-signed provenance records:
+
+* **PyPI (PEP 740) attestations**, shown as *Verified details* on the PyPI file page:
+
+  ```bash
+  pip install pypi-attestations
+  pypi-attestations verify pypi --repository https://github.com/chetanxrathore/nextfake \
+      pypi:nextfake-0.1.0-cp310-abi3-macosx_11_0_arm64.whl
+  ```
+
+* **GitHub build provenance** (SLSA), for any downloaded file:
+
+  ```bash
+  pip download nextfake==0.1.0 --no-deps -d dist
+  gh attestation verify dist/nextfake-*.whl --repo chetanxrathore/nextfake
+  ```
