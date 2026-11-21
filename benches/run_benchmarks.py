@@ -60,7 +60,41 @@ SCHEMA = {
 # ---------------------------------------------------------------------------------------------
 
 
-def _maxrss_mb() -> float:
+def _peak_rss_mb() -> float:
+    """Peak RSS of *this* process in MB.
+
+    Linux: ``VmHWM`` from /proc (``ru_maxrss`` inherits the parent's high-water mark across
+    fork/exec, which would report the spawning process instead). macOS: ``ru_maxrss`` (bytes).
+    Windows: ``PeakWorkingSetSize``.
+    """
+    if sys.platform.startswith("linux"):
+        with open("/proc/self/status", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("VmHWM:"):
+                    return int(line.split()[1]) / 1024
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        class _Counters(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("PageFaultCount", wintypes.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        counters = _Counters()
+        counters.cb = ctypes.sizeof(counters)
+        handle = ctypes.windll.kernel32.GetCurrentProcess()
+        ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb)
+        return counters.PeakWorkingSetSize / (1024 * 1024)
     import resource
 
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
@@ -207,7 +241,7 @@ def _row_count(bench: str, result: Any, workdir: Path, impl: str) -> int:
 def worker(bench: str, impl: str, n: int, repeat: int, workdir: Path) -> dict[str, Any]:
     run = build_case(bench, impl, n, workdir)
     gc.collect()
-    baseline = _maxrss_mb()
+    baseline = _peak_rss_mb()
     times: list[float] = []
     rows = 0
     for i in range(repeat):
@@ -217,7 +251,7 @@ def worker(bench: str, impl: str, n: int, repeat: int, workdir: Path) -> dict[st
         elapsed = time.perf_counter() - t0
         times.append(elapsed)
         if i == 0:
-            peak_after_first = _maxrss_mb()
+            peak_after_first = _peak_rss_mb()
             rows = _row_count(bench, result, workdir, impl)
         del result
         # Adaptive repeats for slow competitors: stop after one run if it took >= 2s.
@@ -227,7 +261,7 @@ def worker(bench: str, impl: str, n: int, repeat: int, workdir: Path) -> dict[st
         "times": times,
         "rows": rows,
         "baseline_rss_mb": baseline,
-        "peak_rss_mb": max(_maxrss_mb(), peak_after_first),
+        "peak_rss_mb": max(_peak_rss_mb(), peak_after_first),
     }
 
 
@@ -508,8 +542,9 @@ def markdown(results: list[Result], env: dict[str, Any], scale: float) -> str:
         "## Methodology",
         "",
         "* Each (benchmark, library) pair runs in an isolated subprocess; *Peak RSS* is that "
-        "process's `ru_maxrss` (imports + data), *RSS after imports* is the high-water mark "
-        "right before the first timed run.",
+        "process's own high-water mark (`ru_maxrss` on macOS, `VmHWM` on Linux, "
+        "`PeakWorkingSetSize` on Windows) covering imports + data; *RSS after imports* is the "
+        "high-water mark right before the first timed run.",
         "* Generator / factory setup and a tiny warm-up call are excluded from timing. Timed "
         "regions cover the whole user-visible operation (e.g. rows **and** DataFrame "
         "construction **and** Parquet write).",

@@ -8,10 +8,11 @@ import decimal
 import enum
 import ipaddress
 import uuid
-from typing import Annotated, Any, Literal, NotRequired, Optional, TypedDict
+from typing import Annotated, Any, Literal, Optional, TypedDict
 
 import pytest
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, IPvAnyAddress
+from typing_extensions import NotRequired  # typing.NotRequired is 3.11+
 
 import nextfake
 from nextfake.schema import infer_provider

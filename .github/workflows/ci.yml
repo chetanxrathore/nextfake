@@ -19,7 +19,7 @@ jobs:
     name: Rust (fmt, clippy, test)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -42,10 +42,10 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.10", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Create venv & install dev dependencies
@@ -65,14 +65,20 @@ jobs:
     name: Free-threaded CPython 3.14t smoke test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.14t"
-      - run: |
+      # Build a wheel and install it on its own: `maturin develop` would also install the
+      # project's `dev` dependency group, and some of it (polars-runtime) has no 3.14t wheel
+      # and is compiled from source (~20 min).
+      - name: Build and install the wheel
+        run: |
           uv venv
-          uv pip install maturin pytest
-          uv run --no-sync maturin develop --release
-          uv run --no-sync python -c "import sys, nextfake; assert not sys._is_gil_enabled(); print(nextfake.Faker(seed=1).names(5))"
+          uv pip install maturin
+          uv run --no-sync maturin build --release --out dist --interpreter python
+          uv pip install --no-deps dist/*.whl
+      - name: Smoke test (GIL stays disabled, concurrent generation)
+        run: uv run --no-sync python .github/scripts/free_threaded_smoke.py

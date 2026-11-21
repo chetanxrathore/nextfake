@@ -222,14 +222,22 @@ def test_module_level_exporters(tmp_path: Path) -> None:
     assert nextfake.to_parquet({"id": "int"}, 10, tmp_path / "m.parquet").exists()
 
 
+_PEAK_RSS_SNIPPET = """
+import sys
+if sys.platform.startswith("linux"):
+    # ru_maxrss inherits the parent's (pytest's) high-water mark across fork/exec on Linux;
+    # VmHWM only covers this process image.
+    with open("/proc/self/status", encoding="ascii") as fh:
+        hwm = next(int(line.split()[1]) for line in fh if line.startswith("VmHWM:"))
+    print(hwm / 1024)
+else:
+    import resource
+    print(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024))
+"""
+
+
 def _peak_rss_mb(code: str) -> float:
-    script = textwrap.dedent(code) + textwrap.dedent(
-        """
-        import resource, sys
-        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        print(rss / (1024 * 1024) if sys.platform == "darwin" else rss / 1024)
-        """
-    )
+    script = textwrap.dedent(code) + _PEAK_RSS_SNIPPET
     res = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
     return float(res.stdout.strip().splitlines()[-1])
 
