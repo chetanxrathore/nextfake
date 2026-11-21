@@ -1,1 +1,46 @@
+"""Type stubs for the compiled Rust extension module ``nextfake._nextfake``."""
+
+from collections.abc import Iterable, Mapping
+from typing import Any, final
+
 __version__: str
+CHUNK_ROWS: int
+PROVIDERS: list[str]
+LOCALES: list[str]
+
+@final
+class CompiledPlan:
+    """A validated, reusable column plan compiled in Rust."""
+
+    def __init__(self, columns: Iterable[Mapping[str, Any]]) -> None: ...
+    @property
+    def names(self) -> list[str]: ...
+    @property
+    def arrow_types(self) -> list[str]: ...
+    def __len__(self) -> int: ...
+
+@final
+class Engine:
+    """Stateful, seeded generation engine (session RNG + parallel bulk generation)."""
+
+    def __init__(
+        self, locale: str = "en_US", seed: int | None = None, threads: int | None = None
+    ) -> None: ...
+    @property
+    def locale(self) -> str: ...
+    @property
+    def threads(self) -> int | None: ...
+    @property
+    def effective_threads(self) -> int: ...
+    def reseed(self, seed: int | None = None) -> None: ...
+    def value(self, provider: str, params: Mapping[str, Any] | None = None) -> Any: ...
+    def values(
+        self,
+        provider: str,
+        n: int,
+        params: Mapping[str, Any] | None = None,
+        null_probability: float = 0.0,
+    ) -> list[Any]: ...
+    def dicts(self, plan: CompiledPlan, count: int) -> list[dict[str, Any]]: ...
+    def tuples(self, plan: CompiledPlan, count: int) -> list[tuple[Any, ...]]: ...
+    def columns(self, plan: CompiledPlan, count: int) -> dict[str, list[Any]]: ...

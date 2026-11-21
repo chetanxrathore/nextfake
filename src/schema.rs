@@ -59,6 +59,21 @@ impl Plan {
         Ok(Plan { columns })
     }
 
+    /// Build a plan from pre-assembled column specs (custom RNG streams), validating it.
+    pub fn from_specs(columns: Vec<ColumnSpec>) -> Result<Plan> {
+        let streams: Vec<u64> = columns.iter().map(|c| c.stream).collect();
+        let mut plan = Plan::new(
+            columns
+                .into_iter()
+                .map(|c| (c.name, c.provider, c.null_probability))
+                .collect(),
+        )?;
+        for (c, s) in plan.columns.iter_mut().zip(streams) {
+            c.stream = s;
+        }
+        Ok(plan)
+    }
+
     pub fn len(&self) -> usize {
         self.columns.len()
     }

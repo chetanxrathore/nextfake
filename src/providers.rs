@@ -478,6 +478,16 @@ pub enum Provider {
     },
     HexColor,
     Constant(Arc<str>),
+    /// ISO-8601 date string (`YYYY-MM-DD`), for string-typed date fields.
+    IsoDate {
+        start: i32,
+        end: i32,
+    },
+    /// Any string provider, truncated to at most `max_chars` characters.
+    Truncated {
+        inner: Box<Provider>,
+        max_chars: usize,
+    },
 }
 
 /// Canonical provider names (used for docs, error messages and Python introspection).
@@ -529,6 +539,7 @@ pub const PROVIDER_NAMES: &[&str] = &[
     "password",
     "hex_color",
     "constant",
+    "iso_date",
 ];
 
 fn canonical(name: &str) -> &str {
@@ -556,6 +567,7 @@ fn canonical(name: &str) -> &str {
         "pyfloat" | "number" => "float",
         "boolean" | "pybool" => "bool",
         "dob" | "birthdate" => "date_of_birth",
+        "date_iso" | "date_string" | "date_str" => "iso_date",
         "timestamp" | "date_time" => "datetime",
         "iso_datetime" | "datetime_iso" => "iso8601",
         "epoch" | "unix_timestamp" => "unix_time",
@@ -639,8 +651,8 @@ impl Provider {
                 Provider::Bool { p }
             }
             "choice" => Self::parse_choice(params)?,
-            "date" | "date_of_birth" => {
-                let (ds, de) = if canonical(&lower) == "date" {
+            "date" | "date_of_birth" | "iso_date" => {
+                let (ds, de) = if canonical(&lower) != "date_of_birth" {
                     (DEFAULT_DATE_START, DEFAULT_DATE_END)
                 } else {
                     (DOB_START, DOB_END)
@@ -652,9 +664,11 @@ impl Provider {
                     i32::try_from(v)
                         .map_err(|_| NfError::InvalidParameter(format!("date out of range: {v}")))
                 };
-                Provider::Date {
-                    start: to_i32(start)?,
-                    end: to_i32(end)?,
+                let (start, end) = (to_i32(start)?, to_i32(end)?);
+                if canonical(&lower) == "iso_date" {
+                    Provider::IsoDate { start, end }
+                } else {
+                    Provider::Date { start, end }
                 }
             }
             "datetime" | "iso8601" => {
@@ -743,6 +757,19 @@ impl Provider {
             _ => return Err(NfError::UnknownProvider(name.to_string())),
         };
         Ok(p)
+    }
+
+    /// Wrap a string provider so values are truncated to `max_chars` characters.
+    pub fn truncated(inner: Provider, max_chars: usize) -> Result<Provider> {
+        match inner.kind() {
+            Kind::Str | Kind::Cat => Ok(Provider::Truncated {
+                inner: Box::new(inner),
+                max_chars,
+            }),
+            other => Err(NfError::InvalidParameter(format!(
+                "max_length only applies to string providers, not {other:?} output"
+            ))),
+        }
     }
 
     fn parse_choice(params: &Params) -> Result<Provider> {
@@ -973,6 +1000,25 @@ impl Provider {
                 push_hex(out, u64::from(rng.next_u32() & 0xFF_FFFF), 6);
             }
             Provider::Constant(s) => out.push_str(s),
+            Provider::IsoDate { start, end } => {
+                push_date(
+                    out,
+                    rng.range_i64(i64::from(*start), i64::from(*end)) as i32,
+                );
+            }
+            Provider::Truncated { inner, max_chars } => {
+                let begin = out.len();
+                if inner.kind() == Kind::Cat {
+                    let table = inner.table(loc).expect("categorical provider has a table");
+                    let i = inner.gen_index(rng, table.len());
+                    out.push_str(table.get(i as usize));
+                } else {
+                    inner.write_str(rng, row, ctx, out);
+                }
+                if let Some((cut, _)) = out[begin..].char_indices().nth(*max_chars) {
+                    out.truncate(begin + cut);
+                }
+            }
             _ => unreachable!("not a string provider: {self:?}"),
         }
     }
@@ -1407,19 +1453,25 @@ fn write_url<R: Rng>(rng: &mut R, loc: &'static Locale, out: &mut String) {
 
 fn write_user_agent<R: Rng>(rng: &mut R, out: &mut String) {
     let tpl = rng_pick(rng, locales::USER_AGENTS);
+    // Draw each version once so repeated tokens (e.g. Chrome/Edg) stay consistent.
+    let ch = rng.range_i64(118, 140);
+    let ff = rng.range_i64(115, 145);
+    let apple = rng.range_i64(15, 19);
+    let android = rng.range_i64(11, 15);
+    let pixel = rng.range_i64(6, 9);
+    let minor = rng.range_i64(0, 6);
     let mut rest = tpl;
     while let Some(open) = rest.find('{') {
         out.push_str(&rest[..open]);
         let close = rest[open..].find('}').map_or(rest.len(), |c| open + c);
         let token = &rest[open + 1..close];
         let v = match token {
-            "CH" => rng.range_i64(118, 140),
-            "FF" => rng.range_i64(115, 145),
-            "SF" => rng.range_i64(15, 19),
-            "IOS" => rng.range_i64(15, 19),
-            "AND" => rng.range_i64(11, 15),
-            "PX" => rng.range_i64(6, 9),
-            _ => rng.range_i64(0, 6),
+            "CH" => ch,
+            "FF" => ff,
+            "SF" | "IOS" => apple,
+            "AND" => android,
+            "PX" => pixel,
+            _ => minor,
         };
         push_num(out, v);
         rest = &rest[(close + 1).min(rest.len())..];
