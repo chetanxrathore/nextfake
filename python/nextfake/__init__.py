@@ -77,6 +77,7 @@ from nextfake.types import (
     Constant,
     Date,
     DateTime,
+    Duration,
     Float,
     Int,
     Nullable,
@@ -89,6 +90,7 @@ from nextfake.types import (
     Spec,
     String,
     Text,
+    Time,
     UnixTime,
 )
 
@@ -102,6 +104,7 @@ __all__ = [
     "Constant",
     "Date",
     "DateTime",
+    "Duration",
     "ExportError",
     "Faker",
     "FieldPlan",
@@ -122,6 +125,7 @@ __all__ = [
     "Spec",
     "String",
     "Text",
+    "Time",
     "UnixTime",
     "UnsupportedTypeError",
     "__version__",

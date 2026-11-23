@@ -12,7 +12,7 @@ license = "MIT OR Apache-2.0"
 license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
 keywords = ["faker", "fake", "synthetic data", "test data", "pydantic", "polars", "arrow", "parquet", "rust"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
@@ -39,6 +39,7 @@ all = ["pydantic>=2.0", "polars>=1.0", "pyarrow>=15", "pandas>=2.0"]
 Homepage = "https://github.com/chetanxrathore/nextfake"
 Repository = "https://github.com/chetanxrathore/nextfake"
 Issues = "https://github.com/chetanxrathore/nextfake/issues"
+Changelog = "https://github.com/chetanxrathore/nextfake/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [

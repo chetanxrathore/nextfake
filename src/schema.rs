@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use arrow_array::{
-    ArrayRef, BooleanArray, Date32Array, Float64Array, Int64Array, RecordBatch, StringArray,
-    TimestampMicrosecondArray,
+    ArrayRef, BooleanArray, Date32Array, DurationMicrosecondArray, Float64Array, Int64Array,
+    RecordBatch, StringArray, Time64MicrosecondArray, TimestampMicrosecondArray,
 };
 use arrow_buffer::{BooleanBuffer, Buffer, NullBuffer, OffsetBuffer, ScalarBuffer};
 use arrow_schema::{DataType, Field, Schema, SchemaRef, TimeUnit};
@@ -163,6 +163,9 @@ pub fn data_type(kind: Kind) -> DataType {
         Kind::Str | Kind::Cat => DataType::Utf8,
         Kind::Date => DataType::Date32,
         Kind::Timestamp => DataType::Timestamp(TimeUnit::Microsecond, None),
+        Kind::TimestampUtc => DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+        Kind::Time => DataType::Time64(TimeUnit::Microsecond),
+        Kind::Duration => DataType::Duration(TimeUnit::Microsecond),
     }
 }
 
@@ -187,6 +190,18 @@ pub fn to_array(col: Column) -> ArrayRef {
             validity.map(NullBuffer::from),
         )),
         Data::Timestamp(v) => Arc::new(TimestampMicrosecondArray::new(
+            ScalarBuffer::from(v),
+            validity.map(NullBuffer::from),
+        )),
+        Data::TimestampUtc(v) => Arc::new(
+            TimestampMicrosecondArray::new(ScalarBuffer::from(v), validity.map(NullBuffer::from))
+                .with_timezone("UTC"),
+        ),
+        Data::Time(v) => Arc::new(Time64MicrosecondArray::new(
+            ScalarBuffer::from(v),
+            validity.map(NullBuffer::from),
+        )),
+        Data::Duration(v) => Arc::new(DurationMicrosecondArray::new(
             ScalarBuffer::from(v),
             validity.map(NullBuffer::from),
         )),

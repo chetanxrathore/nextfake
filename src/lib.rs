@@ -29,8 +29,8 @@ mod _nextfake {
     use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyTypeError, PyValueError};
     use pyo3::prelude::*;
     use pyo3::types::{
-        PyBool, PyBytes, PyCapsule, PyDate, PyDateTime, PyDict, PyFloat, PyInt, PyList, PyString,
-        PyTuple,
+        PyBool, PyBytes, PyCapsule, PyDate, PyDateTime, PyDelta, PyDict, PyFloat, PyInt, PyList,
+        PyString, PyTime, PyTuple, PyTzInfo,
     };
 
     use crate::errors::NfError;
@@ -142,12 +142,14 @@ mod _nextfake {
                 _ => Params::new(),
             };
             let null_probability: f64 = optional(d, "null_probability")?.unwrap_or(0.0);
+            let min_length: Option<usize> = optional(d, "min_length")?;
             let max_length: Option<usize> = optional(d, "max_length")?;
             let seed_key: Option<String> = optional(d, "seed_key")?;
             let mut provider =
                 Provider::parse(&provider_name, &params).map_err(|e| with_column(e, &name))?;
-            if let Some(n) = max_length {
-                provider = Provider::truncated(provider, n).map_err(|e| with_column(e, &name))?;
+            if min_length.is_some() || max_length.is_some() {
+                provider = Provider::fit(provider, min_length.unwrap_or(0), max_length)
+                    .map_err(|e| with_column(e, &name))?;
             }
             specs.push(ColumnSpec {
                 stream: rng::stream_id(seed_key.as_deref().unwrap_or(&name)),
@@ -183,6 +185,9 @@ mod _nextfake {
             Kind::Str | Kind::Cat => "string",
             Kind::Date => "date32",
             Kind::Timestamp => "timestamp[us]",
+            Kind::TimestampUtc => "timestamp[us, tz=UTC]",
+            Kind::Time => "time64[us]",
+            Kind::Duration => "duration[us]",
         }
     }
 
@@ -201,6 +206,7 @@ mod _nextfake {
         py: Python<'py>,
         none: Bound<'py, PyAny>,
         caches: Vec<Cache<'py>>,
+        utc: Option<Bound<'py, PyTzInfo>>,
     }
 
     impl<'py> Converter<'py> {
@@ -209,6 +215,7 @@ mod _nextfake {
                 py,
                 none: py.None().into_bound(py),
                 caches: (0..ncols).map(|_| Cache::Empty).collect(),
+                utc: None,
             }
         }
 
@@ -260,7 +267,15 @@ mod _nextfake {
                         }
                     }
                 }
-                Data::Timestamp(v) => {
+                Data::Timestamp(v) | Data::TimestampUtc(v) => {
+                    let tz = if matches!(col.data, Data::TimestampUtc(_)) {
+                        if self.utc.is_none() {
+                            self.utc = Some(PyTzInfo::utc(py)?.to_owned());
+                        }
+                        self.utc.as_ref()
+                    } else {
+                        None
+                    };
                     let c = civil_from_micros(v[i]);
                     PyDateTime::new(
                         py,
@@ -271,7 +286,36 @@ mod _nextfake {
                         c.minute as u8,
                         c.second as u8,
                         c.micro,
+                        tz,
+                    )?
+                    .into_any()
+                }
+                Data::Time(v) => {
+                    let us = v[i].rem_euclid(providers::MICROS_PER_DAY);
+                    let secs = us / 1_000_000;
+                    PyTime::new(
+                        py,
+                        (secs / 3600) as u8,
+                        ((secs / 60) % 60) as u8,
+                        (secs % 60) as u8,
+                        (us % 1_000_000) as u32,
                         None,
+                    )?
+                    .into_any()
+                }
+                Data::Duration(v) => {
+                    let us = v[i];
+                    let days = us.div_euclid(providers::MICROS_PER_DAY);
+                    let rem = us.rem_euclid(providers::MICROS_PER_DAY);
+                    let days = i32::try_from(days).map_err(|_| {
+                        PyValueError::new_err(format!("duration out of range: {us} us"))
+                    })?;
+                    PyDelta::new(
+                        py,
+                        days,
+                        (rem / 1_000_000) as i32,
+                        (rem % 1_000_000) as i32,
+                        false,
                     )?
                     .into_any()
                 }

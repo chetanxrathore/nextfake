@@ -30,7 +30,9 @@ import re
 import types
 import typing
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Literal, Union, get_args, get_origin
 
@@ -39,6 +41,7 @@ from nextfake.exceptions import SchemaError, UnsupportedTypeError
 from nextfake.types import (
     Bool,
     Choice,
+    Constant,
     Date,
     DateTime,
     Float,
@@ -59,6 +62,19 @@ Converter = Callable[[Any], Any]
 _NONE_TYPE = type(None)
 _MISSING = object()
 
+# Anchor for Pydantic's ``FutureDate`` / ``PastDate`` / ``FutureDatetime`` / ``PastDatetime``;
+# ``None`` = today (future types) or the fixed default ranges (past types).
+_REFERENCE_DATE: ContextVar[_dt.date | None] = ContextVar("nextfake_reference_date", default=None)
+
+
+@contextmanager
+def _reference_date(value: _dt.date | None) -> Iterator[None]:
+    token = _REFERENCE_DATE.set(value)
+    try:
+        yield
+    finally:
+        _REFERENCE_DATE.reset(token)
+
 
 @dataclass
 class FieldPlan:
@@ -76,6 +92,10 @@ class FieldPlan:
     always_convert: bool = False
     """Apply ``converter`` even before Pydantic validation."""
     nested: CompiledSchema | None = None
+    input_path: tuple[str | int, ...] | None = None
+    """Nested input location for a Pydantic ``AliasPath`` validation alias."""
+    columnar: bool = True
+    """Whether columnar exports (Arrow, Parquet, ...) can represent the field's values."""
 
 
 @dataclass
@@ -122,6 +142,12 @@ class CompiledSchema:
             raise UnsupportedTypeError(
                 f"{operation} does not support nested model fields ({names}); "
                 "use generate()/to_dicts(), or flatten the schema / add overrides"
+            )
+        mixed = [f.name for f in self.flat_fields if not f.columnar]
+        if mixed:
+            raise UnsupportedTypeError(
+                f"{operation} needs one value type per column, but {', '.join(mixed)} mix "
+                "value types (Enum / Literal); add an override such as nextfake.Choice([...])"
             )
         plan = self.plan("name")
         if plan is None:
@@ -390,7 +416,7 @@ _PROVIDER_KIND: dict[str, str] = {
     "float": "float", "price": "float", "latitude": "float", "longitude": "float",
     "bool": "bool",
     "date": "date", "date_of_birth": "date",
-    "datetime": "datetime",
+    "datetime": "datetime", "time": "time", "duration": "duration",
 }  # fmt: skip
 
 
@@ -419,6 +445,10 @@ class _Constraints:
     max_length: int | None = None
     pattern: str | None = None
     decimal_places: int | None = None
+    max_digits: int | None = None
+    multiple_of: float | None = None
+    multiple_of_decimals: int | None = None
+    strict: bool = False
     explicit: Spec | None = None
 
     def absorb(self, meta: Any) -> None:
@@ -429,10 +459,19 @@ class _Constraints:
             v = getattr(meta, attr, None)
             if isinstance(v, (int, float, decimal.Decimal)) and not isinstance(v, bool):
                 setattr(self, attr, float(v))
-        for attr in ("min_length", "max_length", "decimal_places"):
+        for attr in ("min_length", "max_length", "decimal_places", "max_digits"):
             v = getattr(meta, attr, None)
             if isinstance(v, int) and not isinstance(v, bool):
                 setattr(self, attr, v)
+        m = getattr(meta, "multiple_of", None)
+        if isinstance(m, (int, float, decimal.Decimal)) and not isinstance(m, bool) and m > 0:
+            self.multiple_of = float(m)
+            exponent = decimal.Decimal(str(m)).normalize().as_tuple().exponent
+            self.multiple_of_decimals = -exponent if isinstance(exponent, int) else None
+            if self.multiple_of_decimals is not None and self.multiple_of_decimals < 0:
+                self.multiple_of_decimals = 0
+        if getattr(meta, "strict", None) is True:
+            self.strict = True
         pat = getattr(meta, "pattern", None)
         if isinstance(pat, str):
             self.pattern = pat
@@ -441,7 +480,7 @@ class _Constraints:
 
     @property
     def has_numeric(self) -> bool:
-        return any(v is not None for v in (self.ge, self.gt, self.le, self.lt))
+        return any(v is not None for v in (self.ge, self.gt, self.le, self.lt, self.multiple_of))
 
 
 def _numeric_bounds(c: _Constraints, integer: bool) -> tuple[float | None, float | None]:
@@ -461,7 +500,7 @@ def _apply_numeric(spec: Spec, c: _Constraints, integer: bool) -> Spec:
         return spec
     lo, hi = _numeric_bounds(c, integer)
     if spec.provider == "serial":
-        if hi is None:
+        if hi is None and c.multiple_of is None:
             start = max(int(spec.params.get("start", 1)), int(lo or 1))
             return Serial(start=start)
         spec = Int()
@@ -476,17 +515,33 @@ def _apply_numeric(spec: Spec, c: _Constraints, integer: bool) -> Spec:
         span = d_hi - d_lo
         new_lo = lo if lo is not None else (hi if hi is not None else 0.0) - span
         new_hi = hi if hi is not None else new_lo + span
+    m = c.multiple_of
     if provider == "int":
-        return Int(math.ceil(new_lo), math.floor(new_hi))
-    if provider == "price":
+        step = int(m) if m is not None and m == int(m) else None
+        # Widen a heuristic range that holds no multiple (e.g. rating 1..5, multiple_of=10).
+        if step is not None and step > 1 and math.floor(new_hi / step) < math.ceil(new_lo / step):
+            new_hi = new_lo + step * 10 if hi is None else new_hi
+            new_lo = new_hi - step * 10 if lo is None else new_lo
+        return Int(math.ceil(new_lo), math.floor(new_hi), multiple_of=step)
+    if provider == "price" and m is None:
         lo_c, hi_c = math.ceil(new_lo * 100) / 100, math.floor(new_hi * 100) / 100
         if lo_c <= hi_c:
             return Price(lo_c, hi_c)
     decimals = spec.params.get("decimals") if spec.provider == "float" else None
-    return Float(new_lo, new_hi, decimals=decimals)
+    if provider == "price":
+        decimals = 2
+    if m is not None and c.multiple_of_decimals is not None:
+        decimals = max(decimals or 0, c.multiple_of_decimals)
+    return Float(new_lo, new_hi, decimals=decimals, multiple_of=m)
 
 
-def _apply_length(spec: Spec, c: _Constraints, field_name: str) -> Spec:
+def _apply_length(spec: Spec, c: _Constraints, field_name: str, *, semantic: bool) -> Spec:
+    """Honour ``min_length`` / ``max_length``.
+
+    Semantic providers (e-mail, name, city, ...) keep their meaning: out-of-range values are
+    redrawn in Rust (and only truncated / padded as a last resort). Fields without a semantic
+    provider use random alphanumerics of a fitting length instead.
+    """
     if c.pattern is not None:
         raise UnsupportedTypeError(
             f"field {field_name!r} has a regex pattern constraint ({c.pattern!r}); add an "
@@ -503,23 +558,21 @@ def _apply_length(spec: Spec, c: _Constraints, field_name: str) -> Spec:
         if new_lo > new_hi:
             new_hi = new_lo
         return String(new_lo, new_hi)
-    if lo is not None and lo > 3:
+    if not semantic and lo is not None and lo > 3:
         upper = hi if hi is not None else lo + 16
         return String(lo, max(lo, min(upper, lo + 24)))
-    if hi is not None:
-        current = spec.max_length
-        return spec.truncate(hi if current is None else min(current, hi))
-    return spec
+    fit_lo = max(lo or 0, spec.min_length or 0)
+    fit_hi: int | None = hi
+    if spec.max_length is not None:
+        fit_hi = spec.max_length if hi is None else min(hi, spec.max_length)
+    if fit_hi is not None and fit_lo > fit_hi:
+        fit_lo = fit_hi
+    return spec.length(min_length=fit_lo or None, max_length=fit_hi)
 
 
 # ---------------------------------------------------------------------------------------------
 # Type -> spec resolution
 # ---------------------------------------------------------------------------------------------
-
-
-def _seconds_to_time(v: Any) -> _dt.time:
-    s = int(v)
-    return _dt.time(s // 3600, (s // 60) % 60, s % 60)
 
 
 def _to_decimal(v: Any) -> decimal.Decimal:
@@ -530,8 +583,45 @@ def _to_bytes(v: Any) -> bytes:
     return str(v).encode()
 
 
-def _to_timedelta(v: Any) -> _dt.timedelta:
-    return _dt.timedelta(seconds=int(v))
+def _decimal_spec(spec: Spec, c: _Constraints) -> Spec:
+    """Narrow a ``Decimal`` field's spec by ``decimal_places`` / ``max_digits``."""
+    places = c.decimal_places
+    if c.max_digits is not None:
+        if places is None:
+            places = max(0, min(2, c.max_digits - 1))
+        whole = max(0, c.max_digits - places)
+        bound = 10.0**whole - 10.0**-places
+        c.le = bound if c.le is None else min(c.le, bound)
+        c.ge = -bound if c.ge is None else max(c.ge, -bound)
+    spec = _apply_numeric(spec, c, integer=False)
+    if places is not None:
+        if spec.provider == "price" and places < 2:
+            spec = Float(float(spec.params["min"]), float(spec.params["max"]), decimals=places)
+        elif spec.provider == "float":
+            current = spec.params.get("decimals")
+            spec = spec.with_params(decimals=places if current is None else min(current, places))
+    return spec
+
+
+def _past_future(tname: str) -> Spec | None:
+    """Specs for Pydantic's past / future date and datetime types."""
+    ref = _REFERENCE_DATE.get()
+    day = _dt.timedelta(days=1)
+    if tname == "PastDate":
+        return Date(end=ref - day) if ref is not None else Date()
+    if tname == "PastDatetime":
+        return (
+            DateTime(end=_dt.datetime.combine(ref, _dt.time()) - _dt.timedelta(seconds=1))
+            if ref is not None
+            else DateTime()
+        )
+    base = ref if ref is not None else _dt.date.today()
+    if tname == "FutureDate":
+        return Date(base + day, base + 3650 * day)
+    if tname == "FutureDatetime":
+        start = _dt.datetime.combine(base + day, _dt.time())
+        return DateTime(start, start + 3650 * day)
+    return None
 
 
 def _type_name(tp: Any) -> tuple[str, str]:
@@ -634,10 +724,7 @@ def _spec_for_type(
         return _apply_numeric(spec, c, integer=False), None, False
     if tp is decimal.Decimal:
         spec = heuristic if hk == "float" and heuristic is not None else Price()
-        spec = _apply_numeric(spec, c, integer=False)
-        if c.decimal_places is not None and spec.provider == "float":
-            spec = spec.with_params(decimals=c.decimal_places)
-        return spec, _to_decimal, False
+        return _decimal_spec(spec, c), _to_decimal, False
     if tp is _dt.datetime:
         spec = heuristic if hk == "datetime" and heuristic is not None else DateTime()
         return spec, None, False
@@ -646,13 +733,13 @@ def _spec_for_type(
             return heuristic, None, False
         return Date(), None, False
     if tp is _dt.time:
-        return Int(0, 86_399), _seconds_to_time, True
+        return Provider("time"), None, False
     if tp is _dt.timedelta:
-        return Int(0, 30 * 86_400), _to_timedelta, True
+        return Provider("duration"), None, False
     if tp is uuid.UUID:
         return Provider("uuid4"), uuid.UUID, False
     if tp is bytes:
-        return _apply_length(String(), c, name), _to_bytes, True
+        return _apply_length(String(), c, name, semantic=False), _to_bytes, True
     if tp is ipaddress.IPv4Address:
         return Provider("ipv4"), ipaddress.IPv4Address, False
     if tp is ipaddress.IPv6Address:
@@ -668,13 +755,15 @@ def _spec_for_type(
             return Provider("password"), None, False
         if tname == "PaymentCardNumber":
             return Provider("credit_card_number"), None, False
-        if tname == "PastDate":
-            return Date(end=_dt.date.today() - _dt.timedelta(days=1)), None, False
-        if tname == "FutureDate":
-            today = _dt.date.today()
-            future = Date(today + _dt.timedelta(days=1), today + _dt.timedelta(days=3650))
-            return future, None, False
+        if tname == "AwareDatetime":
+            return DateTime(utc=True), None, False
+        if tname == "NaiveDatetime":
+            return DateTime(), None, False
+        past_future = _past_future(tname)
+        if past_future is not None:
+            return past_future, None, False
     if tp is str or (isinstance(tp, type) and issubclass(tp, str)):
+        semantic = True
         if heuristic is _ID:
             spec = Provider("uuid4")
         elif heuristic is not None and hk == "str":
@@ -686,8 +775,8 @@ def _spec_for_type(
             if heuristic.provider == "date_of_birth":
                 spec = Spec("iso_date", Date(_dt.date(1940, 1, 1), _dt.date(2007, 12, 31)).params)
         else:
-            spec = Provider("word")
-        return _apply_length(spec, c, name), None, False
+            spec, semantic = Provider("word"), False
+        return _apply_length(spec, c, name, semantic=semantic), None, False
     if tp is Any or tp is object:
         if heuristic is _ID:
             return _resolve_id(int, exact_id), None, False
@@ -705,12 +794,14 @@ def _field_plan(
     override: Spec | None,
     null_probability: float,
     stack: tuple[Any, ...],
+    strict: bool = False,
 ) -> FieldPlan | None:
     c = _Constraints()
     for m in metadata:
         c.absorb(m)
     tp, nullable = _unwrap(annotation, c)
     null_p = null_probability if nullable else 0.0
+    strict = strict or c.strict
 
     spec = override or c.explicit
     if spec is not None:
@@ -719,21 +810,22 @@ def _field_plan(
 
     if get_origin(tp) is Literal:
         values = list(get_args(tp))
-        return FieldPlan(name, input_key, Choice(values), null_p)
+        if any(v is None for v in values):
+            values = [v for v in values if v is not None]
+            null_p = null_probability
+        if not values:  # Literal[None]
+            return FieldPlan(name, input_key, Constant("").nullable(1.0), 1.0)
+        return _choice_plan(name, input_key, values, null_p, converter=None, strict=strict)
     if isinstance(tp, type) and issubclass(tp, enum.Enum):
         members = list(tp)
         if not members:
             raise UnsupportedTypeError(f"field {name!r}: enum {tp.__name__} has no members")
         values = [m.value for m in members]
-        if all(isinstance(v, (str, int, float)) for v in values) and (
-            len({type(v) for v in values}) == 1
-        ):
-            return FieldPlan(name, input_key, Choice(values), null_p, converter=tp)
-        index_lookup = members.__getitem__
-        return FieldPlan(
-            name, input_key, Int(0, len(members) - 1), null_p,
-            converter=index_lookup, always_convert=True,
-        )  # fmt: skip
+        if _homogeneous(values):
+            return FieldPlan(
+                name, input_key, Choice(values), null_p, converter=tp, always_convert=strict
+            )
+        return _choice_plan(name, input_key, members, null_p, converter=None, strict=strict)
     if _is_schema_class(tp):
         if tp in stack:
             if has_default or nullable:
@@ -751,7 +843,32 @@ def _field_plan(
             f"overrides={{{name!r}: nextfake.Provider('word')}}"
         )
     spec, converter, always = resolved
+    # Strict-mode models accept only exact types (UUID, Decimal, ...), so convert up front.
+    always = always or (strict and converter is not None)
     return FieldPlan(name, input_key, spec, null_p, converter=converter, always_convert=always)
+
+
+def _homogeneous(values: list[Any]) -> bool:
+    kinds = {type(v) for v in values}
+    return len(kinds) == 1 and kinds <= {str, int, float, bool}
+
+
+def _choice_plan(
+    name: str,
+    input_key: str,
+    values: list[Any],
+    null_p: float,
+    *,
+    converter: Converter | None,
+    strict: bool,
+) -> FieldPlan:
+    """A field drawn from fixed values: native choice if homogeneous, else by index."""
+    if _homogeneous(values):
+        return FieldPlan(name, input_key, Choice(values), null_p, converter=converter)
+    return FieldPlan(
+        name, input_key, Int(0, len(values) - 1), null_p,
+        converter=values.__getitem__, always_convert=True, columnar=False,
+    )  # fmt: skip
 
 
 # ---------------------------------------------------------------------------------------------
@@ -784,22 +901,44 @@ def _compile_pydantic(
 ) -> CompiledSchema:
     fields_info = model.model_fields
     _check_overrides(overrides, list(fields_info), model.__name__)
+    config = getattr(model, "model_config", {}) or {}
+    model_strict = bool(config.get("strict"))
+    by_alias = config.get("validate_by_alias", True) is not False
     plans: list[FieldPlan] = []
     for name, fi in fields_info.items():
-        alias = fi.validation_alias if isinstance(fi.validation_alias, str) else fi.alias
+        key, path = _input_location(name, fi, by_alias)
         fp = _field_plan(
             name,
-            alias or name,
+            key,
             fi.annotation,
             metadata=tuple(fi.metadata),
             has_default=not fi.is_required(),
             override=overrides.get(name),
             null_probability=null_probability,
             stack=(*stack, model),
+            strict=model_strict,
         )
         if fp is not None:
+            fp.input_path = path
             plans.append(fp)
     return CompiledSchema("pydantic", model, plans)
+
+
+def _input_location(name: str, fi: Any, by_alias: bool) -> tuple[str, tuple[str | int, ...] | None]:
+    """The key (or nested ``AliasPath``) under which Pydantic validates a field."""
+    if not by_alias:
+        return name, None
+    alias: Any = fi.validation_alias
+    if type(alias).__name__ == "AliasChoices":
+        alias = alias.choices[0] if alias.choices else None
+    if isinstance(alias, str):
+        return alias, None
+    if type(alias).__name__ == "AliasPath":
+        path = tuple(alias.path)
+        if len(path) == 1 and isinstance(path[0], str):
+            return path[0], None
+        return name, path
+    return fi.alias or name, None
 
 
 def _compile_dataclass(
@@ -935,8 +1074,12 @@ def _compile_class(
 
 
 @functools.lru_cache(maxsize=512)
-def _compile_cached(schema: Any, null_probability: float) -> CompiledSchema:
-    return _compile_class(schema, overrides=None, null_probability=null_probability)
+def _compile_cached(
+    schema: Any, null_probability: float, reference_date: _dt.date | None, today: _dt.date
+) -> CompiledSchema:
+    # ``today`` is part of the cache key: future-date ranges move with the calendar.
+    with _reference_date(reference_date):
+        return _compile_class(schema, overrides=None, null_probability=null_probability)
 
 
 def compile_schema(
@@ -944,6 +1087,7 @@ def compile_schema(
     *,
     overrides: Mapping[str, Spec | str] | None = None,
     null_probability: float = 0.1,
+    reference_date: _dt.date | None = None,
 ) -> CompiledSchema:
     """Compile a Pydantic model, dataclass, TypedDict or ``dict`` schema.
 
@@ -951,14 +1095,22 @@ def compile_schema(
         schema: The schema to introspect.
         overrides: Per-field provider overrides (``Spec`` objects or provider names).
         null_probability: Probability of ``None`` for ``Optional[...]`` fields.
+        reference_date: "Today" for Pydantic ``PastDate`` / ``FutureDate`` /
+            ``PastDatetime`` / ``FutureDatetime`` fields. ``None`` keeps past types on fixed
+            ranges (reproducible forever) and anchors future types to the real today.
     """
     if not 0.0 <= null_probability <= 1.0:
         raise SchemaError(f"null_probability must be within [0, 1], got {null_probability!r}")
-    if isinstance(schema, Mapping):
-        return _compile_mapping(schema, _normalize_overrides(overrides), null_probability)
-    if not overrides:
-        try:
-            return _compile_cached(schema, float(null_probability))
-        except TypeError:  # unhashable schema object
-            pass
-    return _compile_class(schema, overrides=overrides, null_probability=null_probability)
+    if isinstance(reference_date, _dt.datetime):
+        reference_date = reference_date.date()
+    with _reference_date(reference_date):
+        if isinstance(schema, Mapping):
+            return _compile_mapping(schema, _normalize_overrides(overrides), null_probability)
+        if not overrides:
+            try:
+                return _compile_cached(
+                    schema, float(null_probability), reference_date, _dt.date.today()
+                )
+            except TypeError:  # unhashable schema object
+                pass
+        return _compile_class(schema, overrides=overrides, null_probability=null_probability)

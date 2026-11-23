@@ -46,8 +46,10 @@ feature (enabled automatically by maturin), so Rust tests never need to link lib
 
 * **Determinism is a contract.** For a given seed, output must be identical for any thread
   count, and existing columns must not change when unrelated columns are added. Changes to
-  `CHUNK_ROWS`, RNG keying or a provider's sampling logic change generated data — call this out
-  in the PR and the changelog.
+  `CHUNK_ROWS`, RNG keying or a provider's sampling logic change generated data. Such changes
+  belong in a minor release only: `tests/test_golden.py` fails until you regenerate its digests
+  (`NEXTFAKE_UPDATE_GOLDEN=1 pytest tests/test_golden.py -s`) and add a **Changed data** entry
+  to `CHANGELOG.md`.
 * **No per-row Python objects on bulk paths.** Arrow / Parquet / CSV / JSONL paths must stay in
   Rust with the GIL released (`py.detach`).
 * **Keep the Python layer typed.** Public APIs need annotations that pass `mypy --strict`, and
@@ -78,7 +80,8 @@ then uploads them to PyPI via Trusted Publishing with PEP 740 attestations and G
 provenance (see [SECURITY.md](SECURITY.md#verifying-releases)).
 
 1. Bump `version` in `Cargo.toml` — the single source of truth (the Python package version is
-   read from it by maturin). Run `cargo check` so `Cargo.lock` updates, and run the quality gates.
+   read from it by maturin). Run `cargo check` so `Cargo.lock` updates, move the
+   `Unreleased` notes in `CHANGELOG.md` under the new version, and run the quality gates.
 2. Commit, then tag the commit: `git tag -a vX.Y.Z -m "nextfake X.Y.Z"` and push the tag.
 3. Approve the `pypi` environment deployment in the Actions run if reviewers are required.
 

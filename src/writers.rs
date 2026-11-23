@@ -23,7 +23,9 @@ use parquet::schema::types::ColumnPath;
 use rayon::prelude::*;
 
 use crate::errors::{NfError, Result};
-use crate::providers::{push_date, push_datetime, Column, Ctx, Data, Kind};
+use crate::providers::{
+    push_date, push_datetime, push_duration, push_time, Column, Ctx, Data, Kind,
+};
 use crate::rng::{chunks, Chunk, CHUNK_ROWS};
 use crate::schema::{to_array, Plan};
 
@@ -130,6 +132,12 @@ fn format_scalar(col: &Column, i: usize, buf: &mut String) -> bool {
         Data::Bool(v) => buf.push_str(if v[i] { "true" } else { "false" }),
         Data::Date(v) => push_date(buf, v[i]),
         Data::Timestamp(v) => push_datetime(buf, v[i]),
+        Data::TimestampUtc(v) => {
+            push_datetime(buf, v[i]);
+            buf.push('Z');
+        }
+        Data::Time(v) => push_time(buf, v[i]),
+        Data::Duration(v) => push_duration(buf, v[i]),
         Data::Str { .. } | Data::Cat { .. } => buf.push_str(col.str_at(i).unwrap_or_default()),
     }
     true
@@ -252,7 +260,11 @@ pub fn write_jsonl(plan: &Plan, count: usize, seed: u64, ctx: &Ctx, path: &Path)
                     Data::Str { .. } | Data::Cat { .. } => {
                         push_json_str(&mut out, col.str_at(i).unwrap_or_default());
                     }
-                    Data::Date(_) | Data::Timestamp(_) => {
+                    Data::Date(_)
+                    | Data::Timestamp(_)
+                    | Data::TimestampUtc(_)
+                    | Data::Time(_)
+                    | Data::Duration(_) => {
                         format_scalar(col, i, &mut scratch);
                         out.push(b'"');
                         out.extend_from_slice(scratch.as_bytes());

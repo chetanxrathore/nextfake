@@ -26,6 +26,7 @@ __all__ = [
     "Constant",
     "Date",
     "DateTime",
+    "Duration",
     "Float",
     "Int",
     "Nullable",
@@ -38,6 +39,7 @@ __all__ = [
     "Spec",
     "String",
     "Text",
+    "Time",
     "UnixTime",
 ]
 
@@ -47,20 +49,26 @@ _EPOCH_DT = _dt.datetime(1970, 1, 1)
 
 @dataclass(frozen=True)
 class Spec:
-    """A provider name plus parameters, nullability and an optional maximum length.
+    """A provider name plus parameters, nullability and optional string length bounds.
 
     Attributes:
         provider: Provider name (see ``nextfake.PROVIDERS``), e.g. ``"email"``.
         params: Provider parameters, e.g. ``{"min": 18, "max": 65}``.
         null_probability: Probability of ``None``; ``None`` inherits the field default
             (``0`` for required fields, the generator's ``null_probability`` for ``Optional``).
-        max_length: Truncate generated strings to at most this many characters.
+        max_length: Keep generated strings at most this many characters.
+        min_length: Keep generated strings at least this many characters.
+
+    Values outside ``[min_length, max_length]`` are redrawn from the provider a few times (so
+    an e-mail stays a whole e-mail address); if no draw fits, the last one is truncated or
+    padded with random alphanumerics, so the bounds always hold.
     """
 
     provider: str
     params: Mapping[str, Any] = field(default_factory=dict)
     null_probability: float | None = None
     max_length: int | None = None
+    min_length: int | None = None
 
     def nullable(self, probability: float = 0.1) -> Spec:
         """Return a copy that yields ``None`` with the given probability."""
@@ -72,10 +80,20 @@ class Spec:
         return replace(self, params={**self.params, **params})
 
     def truncate(self, max_length: int) -> Spec:
-        """Return a copy whose string values are truncated to ``max_length`` characters."""
+        """Return a copy whose string values have at most ``max_length`` characters."""
         if max_length < 0:
             raise ValueError("max_length must be >= 0")
         return replace(self, max_length=max_length)
+
+    def length(self, min_length: int | None = None, max_length: int | None = None) -> Spec:
+        """Return a copy whose string values have ``min_length..max_length`` characters."""
+        if min_length is not None and min_length < 0:
+            raise ValueError("min_length must be >= 0")
+        if max_length is not None and max_length < 0:
+            raise ValueError("max_length must be >= 0")
+        if min_length is not None and max_length is not None and min_length > max_length:
+            raise ValueError(f"min_length ({min_length}) must be <= max_length ({max_length})")
+        return replace(self, min_length=min_length, max_length=max_length)
 
     def to_column(
         self,
@@ -94,6 +112,8 @@ class Spec:
         }
         if self.max_length is not None:
             col["max_length"] = self.max_length
+        if self.min_length is not None:
+            col["min_length"] = self.min_length
         if seed_key is not None and seed_key != name:
             col["seed_key"] = seed_key
         return col
@@ -136,11 +156,13 @@ def Provider(name: str, /, **params: Any) -> Spec:
     return Spec(name, _clean(params))
 
 
-def Int(min: int = 0, max: int = 10_000) -> Spec:
-    """Uniform integer in ``[min, max]`` (inclusive)."""
+def Int(min: int = 0, max: int = 10_000, *, multiple_of: int | None = None) -> Spec:
+    """Uniform integer in ``[min, max]`` (inclusive), optionally a multiple of ``multiple_of``."""
     if min > max:
         raise ValueError(f"Int: min ({min}) must be <= max ({max})")
-    return Spec("int", {"min": int(min), "max": int(max)})
+    if multiple_of is not None and multiple_of == 0:
+        raise ValueError("Int: multiple_of must be non-zero")
+    return Spec("int", _clean({"min": int(min), "max": int(max), "multiple_of": multiple_of}))
 
 
 def Float(
@@ -148,11 +170,21 @@ def Float(
     max: float = 1000.0,
     *,
     decimals: int | None = None,
+    multiple_of: float | None = None,
 ) -> Spec:
-    """Uniform float in ``[min, max)``, optionally rounded to ``decimals`` places."""
+    """Uniform float in ``[min, max)``.
+
+    With ``decimals`` and/or ``multiple_of`` the values lie on that grid instead and both
+    bounds are inclusive; every value is guaranteed to be within ``[min, max]``.
+    """
     if min > max:
         raise ValueError(f"Float: min ({min}) must be <= max ({max})")
-    return Spec("float", _clean({"min": float(min), "max": float(max), "decimals": decimals}))
+    if multiple_of is not None and not multiple_of > 0:
+        raise ValueError("Float: multiple_of must be > 0")
+    params = {"min": float(min), "max": float(max), "decimals": decimals}
+    if multiple_of is not None:
+        params["multiple_of"] = float(multiple_of)
+    return Spec("float", _clean(params))
 
 
 def Price(min: float = 1.0, max: float = 1000.0) -> Spec:
@@ -206,11 +238,56 @@ def DateTime(
     end: _dt.datetime | _dt.date | str | None = None,
     *,
     resolution: Literal["s", "ms", "us"] = "s",
+    utc: bool = False,
 ) -> Spec:
-    """A naive UTC ``datetime`` in ``[start, end]`` (default 2020-01-01 .. 2025-12-31)."""
+    """A UTC ``datetime`` in ``[start, end]`` (default 2020-01-01 .. 2025-12-31).
+
+    Naive by default; ``utc=True`` makes values timezone-aware (``tzinfo=timezone.utc``) and
+    the Arrow / Parquet column ``timestamp[us, tz=UTC]``.
+    """
+    params = {"start": _micros(start), "end": _micros(end), "resolution": resolution}
+    if utc:
+        params["utc"] = True
+    return Spec("datetime", _clean(params))
+
+
+def _time_micros(value: _dt.time | str | None) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = _dt.time.fromisoformat(value)
+    return ((value.hour * 60 + value.minute) * 60 + value.second) * 1_000_000 + value.microsecond
+
+
+def _delta_micros(value: _dt.timedelta | None) -> int | None:
+    if value is None:
+        return None
+    return (value.days * 86_400 + value.seconds) * 1_000_000 + value.microseconds
+
+
+def Time(
+    start: _dt.time | str | None = None,
+    end: _dt.time | str | None = None,
+    *,
+    resolution: Literal["s", "ms", "us"] = "s",
+) -> Spec:
+    """A ``datetime.time`` in ``[start, end]`` (default the whole day)."""
     return Spec(
-        "datetime",
-        _clean({"start": _micros(start), "end": _micros(end), "resolution": resolution}),
+        "time",
+        _clean({"start": _time_micros(start), "end": _time_micros(end), "resolution": resolution}),
+    )
+
+
+def Duration(
+    min: _dt.timedelta | None = None,
+    max: _dt.timedelta | None = None,
+    *,
+    resolution: Literal["s", "ms", "us"] = "s",
+) -> Spec:
+    """A ``datetime.timedelta`` in ``[min, max]`` (default 0 .. 30 days)."""
+    return Spec(
+        "duration",
+        _clean({"min": _delta_micros(min), "max": _delta_micros(max), "resolution": resolution}),
     )
 
 

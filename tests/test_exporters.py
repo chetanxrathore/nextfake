@@ -264,3 +264,36 @@ def test_streaming_writers_use_bounded_memory(tmp_path: Path, fmt: str) -> None:
     assert size_mb > 140
     assert peaks[5_000_000] - peaks[1_000_000] < 64, peaks
     assert peaks[5_000_000] < 400, peaks
+
+
+TEMPORAL = {
+    "at": nextfake.Time("09:00", "17:30"),
+    "took": nextfake.Duration(dt.timedelta(minutes=1), dt.timedelta(days=2)),
+    "seen": nextfake.DateTime("2024-01-01", "2024-12-31", utc=True),
+}
+
+
+def test_time_duration_and_utc_columns(gen: nextfake.Faker, tmp_path: Path) -> None:
+    table = gen.to_arrow(TEMPORAL, 1_000)
+    assert [str(t) for t in table.schema.types] == [
+        "time64[us]",
+        "duration[us]",
+        "timestamp[us, tz=UTC]",
+    ]
+    df = gen.to_polars(TEMPORAL, 1_000)
+    assert df["at"].min() >= dt.time(9)
+    assert df["at"].max() <= dt.time(17, 30)
+    assert df["took"].min() >= dt.timedelta(minutes=1)
+    rows = gen.to_dicts(TEMPORAL, 100)
+    assert all(r["seen"].tzinfo is dt.timezone.utc for r in rows)
+
+    pq_path = gen.to_parquet(TEMPORAL, 5_000, tmp_path / "t.parquet")
+    assert pq.read_table(pq_path).schema.types == table.schema.types
+
+    seeded = nextfake.Faker(seed=3)
+    line = json.loads(seeded.to_jsonl(TEMPORAL, 1, tmp_path / "t.jsonl").read_text())
+    assert dt.time.fromisoformat(line["at"])
+    assert line["took"].startswith("P")
+    assert line["seen"].endswith("Z")
+    csv_rows = list(csv.DictReader(seeded.to_csv(TEMPORAL, 3, tmp_path / "t.csv").open()))
+    assert all(r["seen"].endswith("Z") and r["took"].startswith("P") for r in csv_rows)

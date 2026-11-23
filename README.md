@@ -183,11 +183,11 @@ users = gen.generate(User, 100_000)
 
 | Source | Supported |
 |---|---|
-| Pydantic v2 `BaseModel` | field types, `Field(ge/gt/le/lt/min_length/max_length)`, aliases, defaults, nested models, `EmailStr`, `HttpUrl`/`AnyUrl`, `IPvAnyAddress`, `SecretStr`, `PaymentCardNumber`, `PastDate`/`FutureDate` |
+| Pydantic v2 `BaseModel` | field types, `Field(ge/gt/le/lt/multiple_of/min_length/max_length/decimal_places/max_digits)`, aliases (incl. `AliasChoices`, `AliasPath`), strict mode, defaults, nested models, `EmailStr`, `HttpUrl`/`AnyUrl`, `IPvAnyAddress`, `SecretStr`, `PaymentCardNumber`, `AwareDatetime`/`NaiveDatetime`, `PastDate`/`FutureDate`/`PastDatetime`/`FutureDatetime` |
 | `dataclasses` | all `init` fields, defaults, `field(metadata={"nextfake": spec})` |
 | `TypedDict` | `Required`/`NotRequired`, nested TypedDicts |
 | `dict` schema | `{"col": "provider" \| "type" \| Spec \| python_type \| {nested}}`, `"provider?"` for nullable |
-| Types | `int`, `float`, `bool`, `str`, `bytes`, `Decimal`, `date`, `datetime`, `time`, `timedelta`, `UUID`, `IPv4Address`, `IPv6Address`, `Literal[...]`, `Enum`, `Optional[T]`, `T \| None`, `Annotated[T, spec]` |
+| Types | `int`, `float`, `bool`, `str`, `bytes`, `Decimal`, `date`, `datetime`, `time`, `timedelta`, `UUID`, `IPv4Address`, `IPv6Address`, `Literal[...]` (incl. `None` and mixed types), `Enum`, `Optional[T]`, `T \| None`, `Annotated[T, spec]` |
 
 Provider selection order: explicit `overrides=` → `Annotated[..., nextfake.Spec]` →
 `Literal`/`Enum` → **field-name heuristics** (reconciled with the annotation) → type default,
@@ -206,6 +206,20 @@ A few of the heuristics (see `nextfake.infer_provider("field_name")`):
 
 Heuristics respect the annotation: `created_at: int` becomes a Unix timestamp,
 `signup_date: str` an ISO-8601 string, `user_id: str` a UUID.
+
+Constraints are honoured so generated models always validate:
+
+* **Lengths** keep providers meaningful: `email: str = Field(max_length=20)` redraws until a
+  whole address fits instead of cutting one in half. Only when no draw fits (a 2-letter
+  country code with `min_length=3`) is the value padded or truncated.
+* **Numbers** respect `ge`/`gt`/`le`/`lt`, `multiple_of`, and for `Decimal` also
+  `decimal_places` and `max_digits`; values are drawn on the exact grid, never rounded past a
+  bound.
+* **Strict models** (`ConfigDict(strict=True)` or `Field(strict=True)`) receive exact types
+  (`UUID`, `Decimal`, `Enum` members, ...).
+* **Past/future types**: `PastDate`/`PastDatetime` use the fixed default ranges, so they
+  reproduce forever. `FutureDate`/`FutureDatetime` are relative to today unless you pin
+  `Faker(reference_date=date(2030, 1, 1))`.
 
 ### Overrides, constraints and nulls
 
@@ -234,9 +248,11 @@ orders = gen.generate(
 )
 ```
 
-Specs: `Provider(name, **params)`, `Int`, `Float`, `Price`, `Bool`, `Choice`, `Date`,
-`DateTime`, `UnixTime`, `Serial`, `Pattern`, `Sentence`, `Paragraph`/`Text`, `String`,
-`Constant`, `Nullable`, plus `.nullable(p)`, `.truncate(n)`, `.with_params(...)`.
+Specs: `Provider(name, **params)`, `Int(min, max, multiple_of=)`,
+`Float(min, max, decimals=, multiple_of=)`, `Price`, `Bool`, `Choice`, `Date`,
+`DateTime(..., utc=)`, `Time`, `Duration`, `UnixTime`, `Serial`, `Pattern`, `Sentence`,
+`Paragraph`/`Text`, `String`, `Constant`, `Nullable`, plus `.nullable(p)`,
+`.length(min_length, max_length)`, `.truncate(n)`, `.with_params(...)`.
 
 ## Exports
 
@@ -253,7 +269,9 @@ Specs: `Provider(name, **params)`, `Int`, `Float`, `Price`, `Bool`, `Choice`, `D
 Disk writers stream in bounded waves with a dedicated I/O thread and recycled buffers:
 peak memory is flat whether you write 1M or 100M rows.
 
-Arrow types: `int64`, `float64`, `bool`, `string`, `date32`, `timestamp[us]` (naive UTC).
+Arrow types: `int64`, `float64`, `bool`, `string`, `date32`, `timestamp[us]` (naive UTC),
+`timestamp[us, tz=UTC]` (`DateTime(utc=True)`, `AwareDatetime`), `time64[us]`, `duration[us]`.
+CSV / JSONL write ISO-8601 dates, times and durations (`P1DT2H3M4S`).
 
 ## Determinism & parallelism
 
@@ -271,8 +289,22 @@ assert a.equals(b)                       # identical, any thread count / CPU
 * The same seed gives the same data in `to_dicts`, `to_arrow`, `to_polars`, `to_parquet`, ...
 * Default date ranges are fixed (2020–2025 for datetimes), not relative to "now", so a seed
   reproduces forever. UUIDv7 timestamps start at 2025-01-01 for seeded generators.
+  `FutureDate`/`FutureDatetime` fields are the one calendar-relative exception — pin them
+  with `Faker(reference_date=...)`.
 * Single-value calls (`gen.name()`) use a sequential session RNG; each bulk call draws a new
-  batch seed from it.
+  batch seed from it. Reproducibility therefore means: same seed, same nextfake version, same
+  sequence of calls on the `Faker`.
+* Identical output on Linux, macOS and Windows, x86_64 and arm64 is enforced in CI by a
+  golden-output test (`tests/test_golden.py`).
+
+### Stability policy (1.x)
+
+* **API:** semantic versioning. Public names in `nextfake.__all__` and their documented
+  behaviour only change in a major release; deprecations warn for at least one minor release.
+* **Generated data:** for a given seed, schema and locale, patch releases (`1.0.x`) never
+  change generated values. Minor releases (`1.x`) may — for example to fix a provider or add
+  realism — and every such change is listed under **Changed data** in
+  [CHANGELOG.md](CHANGELOG.md). Pin `nextfake~=1.0.0` if your snapshots must never move.
 
 ## Providers
 
@@ -282,8 +314,8 @@ assert a.equals(b)                       # identical, any thread count / CPU
 | Internet & tech | `ipv4`, `ipv6`, `mac_address`, `domain_name`, `url`, `user_agent`, `uuid4`, `uuid7`, `password`, `hex_color` |
 | Location & business | `street_address`, `city`, `state`, `state_abbr`, `postcode`, `country`, `country_code`, `address`, `latitude`, `longitude`, `company`, `job_title` |
 | Finance & commerce | `credit_card_number` (Luhn-valid Visa/MC/Amex/Discover), `currency_code`, `price(min, max)` |
-| Primitives | `int(min, max)`, `float(min, max, decimals)`, `bool(probability)`, `choice(values, weights)`, `serial(start, step)`, `pattern("??-###")`, `string(min_length, max_length)`, `constant(value)` |
-| Time & text | `date`, `date_of_birth`, `datetime`, `iso8601`, `iso_date`, `unix_time`, `word`, `sentence`, `paragraph` |
+| Primitives | `int(min, max, multiple_of)`, `float(min, max, decimals, multiple_of)`, `bool(probability)`, `choice(values, weights)`, `serial(start, step)`, `pattern("??-###")`, `string(min_length, max_length)`, `constant(value)` |
+| Time & text | `date`, `date_of_birth`, `datetime(utc)`, `iso8601`, `iso_date`, `time`, `duration`, `unix_time`, `word`, `sentence`, `paragraph` |
 
 Every provider has a typed single-value method and (for most) a batch method on `Faker`
 (`gen.email()` / `gen.emails(n)`), plus `gen.value("int", min=1, max=6)` /
@@ -405,6 +437,11 @@ python benches/run_benchmarks.py     # rewrites benches/RESULTS.md and these tab
 * `list[...]`, `dict[...]` and union-of-models fields are skipped when they have a default and
   otherwise need an override.
 * Regex-constrained strings (`Field(pattern=...)`) need an explicit `Pattern` override.
+* Enum / `Literal` fields that mix value types (e.g. `Literal[1, "x"]`) work in `generate()`
+  and `to_dicts()`, but columnar exports need one type per column (override with `Choice`).
+* `bytes` fields export as UTF-8 strings in columnar formats.
+* No foreign keys / multi-table relationships or cross-field rules (e.g. `end > start`) yet;
+  pick related values with `Choice(values=parent_ids)` and non-overlapping ranges meanwhile.
 * Values are uniformly random within their tables — no cross-column correlation yet (e.g. a
   city does not determine its postcode).
 

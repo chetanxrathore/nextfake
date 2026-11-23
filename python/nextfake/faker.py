@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as _dt
 import functools
 import importlib
+import itertools
 import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -67,13 +68,17 @@ class Faker:
         threads: Worker threads for bulk generation (``None`` = all CPU cores). Output for a
             given seed is identical for every thread count.
         null_probability: Default probability of ``None`` for ``Optional[...]`` fields.
+        reference_date: "Today" for Pydantic ``PastDate`` / ``FutureDate`` /
+            ``PastDatetime`` / ``FutureDatetime`` fields. Leave ``None`` to keep past types
+            on fixed ranges and future types relative to the real today; pin it to make
+            future-date fields reproducible too.
 
     Single values (``gen.name()``) come from a sequential session RNG; bulk calls
     (``gen.names(10_000)``, ``gen.generate(User, 1_000)``, ``gen.to_polars(...)``) draw a
     fresh batch seed from that RNG and then generate in parallel with the GIL released.
     """
 
-    __slots__ = ("_engine", "_null_probability")
+    __slots__ = ("_engine", "_null_probability", "_reference_date")
 
     def __init__(
         self,
@@ -82,13 +87,19 @@ class Faker:
         threads: int | None = None,
         *,
         null_probability: float = 0.1,
+        reference_date: _dt.date | None = None,
     ) -> None:
         if threads is not None and (isinstance(threads, bool) or threads < 1):
             raise ValueError("threads must be a positive int or None")
         if not 0.0 <= null_probability <= 1.0:
             raise ValueError("null_probability must be within [0, 1]")
+        if reference_date is not None and not isinstance(reference_date, _dt.date):
+            raise TypeError("reference_date must be a datetime.date or None")
+        if isinstance(reference_date, _dt.datetime):
+            reference_date = reference_date.date()
         self._engine = _nf.Engine(locale, _norm_seed(seed), threads)
         self._null_probability = float(null_probability)
+        self._reference_date = reference_date
 
     # ------------------------------------------------------------------ configuration
 
@@ -111,6 +122,11 @@ class Faker:
     def null_probability(self) -> float:
         """Default ``None`` probability for ``Optional`` fields."""
         return self._null_probability
+
+    @property
+    def reference_date(self) -> _dt.date | None:
+        """Anchor date for Pydantic past / future date fields (``None`` = default)."""
+        return self._reference_date
 
     def seed(self, seed: int | None) -> None:
         """Re-seed this generator (``None`` = fresh OS entropy)."""
@@ -466,7 +482,9 @@ class Faker:
         if isinstance(schema, CompiledSchema):
             return schema
         p = self._null_probability if null_probability is None else null_probability
-        return compile_schema(schema, overrides=overrides, null_probability=p)
+        return compile_schema(
+            schema, overrides=overrides, null_probability=p, reference_date=self._reference_date
+        )
 
     def _flat_rows(self, cs: CompiledSchema, count: int, keys: KeyMode) -> list[dict[str, Any]]:
         plan = cs.plan(keys)
@@ -513,6 +531,11 @@ class Faker:
                 v = r[key]
                 if v is not None:
                     r[key] = conv(v)
+        if keys == "input":
+            for f in cs.fields:
+                if f.input_path is not None:
+                    for r in rows:
+                        _set_path(r, f.input_path, r.pop(f.input_key))
         if not objects:
             return rows
         if cs.kind == "pydantic":
@@ -779,6 +802,28 @@ class Faker:
 
     def __copy__(self) -> Self:
         raise TypeError("Faker instances hold RNG state and cannot be copied; create a new one")
+
+
+def _set_path(row: dict[str, Any], path: tuple[str | int, ...], value: Any) -> None:
+    """Place ``value`` at a nested Pydantic ``AliasPath`` location inside ``row``."""
+    node: Any = row
+    for here, nxt in itertools.pairwise(path):
+        child: dict[str, Any] | list[Any] = {} if isinstance(nxt, str) else []
+        if isinstance(node, dict):
+            node = node.setdefault(here, child)
+        else:
+            assert isinstance(here, int)
+            node.extend([None] * (here + 1 - len(node)))
+            if node[here] is None:
+                node[here] = child
+            node = node[here]
+    last = path[-1]
+    if isinstance(node, dict):
+        node[last] = value
+    else:
+        assert isinstance(last, int)
+        node.extend([None] * (last + 1 - len(node)))
+        node[last] = value
 
 
 def _import(module: str, feature: str) -> Any:

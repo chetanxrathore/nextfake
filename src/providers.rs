@@ -34,6 +34,12 @@ pub enum Kind {
     Date,
     /// `Timestamp(Microsecond, None)`
     Timestamp,
+    /// `Timestamp(Microsecond, "UTC")`
+    TimestampUtc,
+    /// `Time64(Microsecond)` (microseconds since midnight)
+    Time,
+    /// `Duration(Microsecond)`
+    Duration,
 }
 
 /// A string lookup table backing a [`Kind::Cat`] column.
@@ -92,6 +98,9 @@ pub enum Data {
     },
     Date(Vec<i32>),
     Timestamp(Vec<i64>),
+    TimestampUtc(Vec<i64>),
+    Time(Vec<i64>),
+    Duration(Vec<i64>),
 }
 
 /// One column of one chunk plus its validity (`None` = no nulls).
@@ -111,7 +120,9 @@ impl Column {
             Data::Str { offsets, .. } => offsets.len() - 1,
             Data::Cat { idx, .. } => idx.len(),
             Data::Date(v) => v.len(),
-            Data::Timestamp(v) => v.len(),
+            Data::Timestamp(v) | Data::TimestampUtc(v) | Data::Time(v) | Data::Duration(v) => {
+                v.len()
+            }
         }
     }
 
@@ -193,6 +204,42 @@ fn p_opt_u32(params: &Params, key: &str) -> Result<Option<u32>> {
         Some(Param::Int(v)) if (0..=15).contains(v) => Ok(Some(*v as u32)),
         Some(other) => Err(NfError::InvalidParameter(format!(
             "{key} must be an integer in 0..=15, got {other:?}"
+        ))),
+    }
+}
+
+fn p_opt_i64(params: &Params, key: &str) -> Result<Option<i64>> {
+    match params.get(key) {
+        None | Some(Param::Null) => Ok(None),
+        _ => p_i64(params, key, 0).map(Some),
+    }
+}
+
+fn p_opt_f64(params: &Params, key: &str) -> Result<Option<f64>> {
+    match params.get(key) {
+        None | Some(Param::Null) => Ok(None),
+        _ => p_f64(params, key, 0.0).map(Some),
+    }
+}
+
+fn p_bool(params: &Params, key: &str, default: bool) -> Result<bool> {
+    match params.get(key) {
+        None | Some(Param::Null) => Ok(default),
+        Some(Param::Bool(b)) => Ok(*b),
+        Some(other) => Err(NfError::InvalidParameter(format!(
+            "{key} must be a bool, got {other:?}"
+        ))),
+    }
+}
+
+/// Parse a `resolution` parameter into a microsecond step (default: whole seconds).
+fn p_resolution(params: &Params) -> Result<i64> {
+    match p_str(params, "resolution")?.as_deref() {
+        None | Some("s") | Some("second") | Some("seconds") => Ok(MICROS_PER_SEC),
+        Some("ms") | Some("millisecond") | Some("milliseconds") => Ok(1_000),
+        Some("us") | Some("microsecond") | Some("microseconds") => Ok(1),
+        Some(other) => Err(NfError::InvalidParameter(format!(
+            "resolution must be one of 's', 'ms', 'us', got {other:?}"
         ))),
     }
 }
@@ -352,14 +399,66 @@ pub fn push_datetime(out: &mut String, us: i64) {
     push_2(out, c.minute);
     out.push(':');
     push_2(out, c.second);
-    if c.micro != 0 {
-        out.push('.');
-        let s = c.micro;
-        push_2(out, s / 10_000);
-        push_2(out, (s / 100) % 100);
-        push_2(out, s % 100);
+    push_fraction(out, c.micro);
+}
+
+/// Append an ISO-8601 time of day (`HH:MM:SS[.ffffff]`) for microseconds since midnight.
+pub fn push_time(out: &mut String, us: i64) {
+    let us = us.rem_euclid(MICROS_PER_DAY);
+    let secs = (us / MICROS_PER_SEC) as u32;
+    push_2(out, secs / 3600);
+    out.push(':');
+    push_2(out, (secs / 60) % 60);
+    out.push(':');
+    push_2(out, secs % 60);
+    push_fraction(out, (us % MICROS_PER_SEC) as u32);
+}
+
+/// Append an ISO-8601 duration (`[-]P[nD][T[nH][nM][n[.ffffff]S]]`; zero is `PT0S`).
+pub fn push_duration(out: &mut String, us: i64) {
+    if us < 0 {
+        out.push('-');
+    }
+    let total = us.unsigned_abs();
+    let micros = (total % 1_000_000) as u32;
+    let secs = total / 1_000_000;
+    let (days, sod) = (secs / 86_400, secs % 86_400);
+    let (h, m, s) = (sod / 3600, (sod / 60) % 60, sod % 60);
+    out.push('P');
+    if days > 0 {
+        out.push_str(itoa::Buffer::new().format(days));
+        out.push('D');
+    }
+    if sod > 0 || micros > 0 || days == 0 {
+        out.push('T');
+        if h > 0 {
+            out.push_str(itoa::Buffer::new().format(h));
+            out.push('H');
+        }
+        if m > 0 {
+            out.push_str(itoa::Buffer::new().format(m));
+            out.push('M');
+        }
+        if s > 0 || micros > 0 || (h == 0 && m == 0) {
+            out.push_str(itoa::Buffer::new().format(s));
+            push_fraction(out, micros);
+            out.push('S');
+        }
     }
 }
+
+#[inline]
+fn push_fraction(out: &mut String, micro: u32) {
+    if micro != 0 {
+        out.push('.');
+        push_2(out, micro / 10_000);
+        push_2(out, (micro / 100) % 100);
+        push_2(out, micro % 100);
+    }
+}
+
+/// Microseconds in a day (exclusive upper bound of a time of day).
+pub const MICROS_PER_DAY: i64 = SECS_PER_DAY * MICROS_PER_SEC;
 
 // Default temporal ranges are fixed (not relative to "now") so a seed reproduces forever.
 const DEFAULT_DT_START_S: i64 = days_from_civil(2020, 1, 1) * SECS_PER_DAY;
@@ -368,6 +467,29 @@ const DEFAULT_DATE_START: i64 = days_from_civil(2000, 1, 1);
 const DEFAULT_DATE_END: i64 = days_from_civil(2025, 12, 31);
 const DOB_START: i64 = days_from_civil(1940, 1, 1);
 const DOB_END: i64 = days_from_civil(2007, 12, 31);
+const DEFAULT_DURATION_MAX_US: i64 = 30 * SECS_PER_DAY * MICROS_PER_SEC;
+/// Draws attempted before a length-constrained string is truncated or padded.
+pub const FIT_ATTEMPTS: usize = 32;
+
+/// The value grid of a float provider with `decimals` and/or `multiple_of`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GridUnit {
+    /// `value = k / factor` (`factor = 10^decimals`): the closest `f64` to the decimal.
+    Div(f64),
+    /// `value = k * step`, optionally rounded to `decimals` places.
+    Mul(f64),
+}
+
+impl GridUnit {
+    #[inline]
+    fn value(self, k: i64, decimals: Option<u32>) -> f64 {
+        match (self, decimals) {
+            (GridUnit::Div(f), _) => k as f64 / f,
+            (GridUnit::Mul(s), None) => k as f64 * s,
+            (GridUnit::Mul(s), Some(d)) => round_to(k as f64 * s, d),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------------------------
 // Providers
@@ -417,9 +539,21 @@ pub enum Provider {
         min: i64,
         max: i64,
     },
+    /// `k * step` for a uniform `k` in `[lo, hi]` (integers with `multiple_of`).
+    IntStep {
+        lo: i64,
+        hi: i64,
+        step: i64,
+    },
     Float {
         min: f64,
         max: f64,
+    },
+    /// Floats on a grid (`decimals` places and/or multiples of a step) within bounds.
+    FloatGrid {
+        lo: i64,
+        hi: i64,
+        unit: GridUnit,
         decimals: Option<u32>,
     },
     Bool {
@@ -445,10 +579,24 @@ pub enum Provider {
         start: i64,
         end: i64,
         resolution: i64,
+        utc: bool,
     },
     Iso8601 {
         start: i64,
         end: i64,
+        resolution: i64,
+        utc: bool,
+    },
+    /// Time of day: microseconds since midnight in `[start, end]`.
+    Time {
+        start: i64,
+        end: i64,
+        resolution: i64,
+    },
+    /// Duration in microseconds in `[min, max]`.
+    Duration {
+        min: i64,
+        max: i64,
         resolution: i64,
     },
     UnixTime {
@@ -483,10 +631,12 @@ pub enum Provider {
         start: i32,
         end: i32,
     },
-    /// Any string provider, truncated to at most `max_chars` characters.
-    Truncated {
+    /// Any string provider kept within `[min_chars, max_chars]` characters: out-of-range
+    /// values are redrawn up to [`FIT_ATTEMPTS`] times, then truncated or padded.
+    Fit {
         inner: Box<Provider>,
-        max_chars: usize,
+        min_chars: usize,
+        max_chars: Option<usize>,
     },
 }
 
@@ -529,6 +679,8 @@ pub const PROVIDER_NAMES: &[&str] = &[
     "date_of_birth",
     "datetime",
     "iso8601",
+    "time",
+    "duration",
     "unix_time",
     "word",
     "sentence",
@@ -571,6 +723,8 @@ fn canonical(name: &str) -> &str {
         "timestamp" | "date_time" => "datetime",
         "iso_datetime" | "datetime_iso" => "iso8601",
         "epoch" | "unix_timestamp" => "unix_time",
+        "timedelta" | "interval" => "duration",
+        "time_of_day" => "time",
         "text" => "paragraph",
         "sequence" | "autoincrement" => "serial",
         "bothify" | "numerify" => "pattern",
@@ -629,16 +783,47 @@ impl Provider {
                 let min = p_i64(params, "min", 0)?;
                 let max = p_i64(params, "max", 10_000)?;
                 check_range(min, max, "int")?;
-                Provider::Int { min, max }
+                match p_opt_i64(params, "multiple_of")? {
+                    None | Some(1) | Some(-1) => Provider::Int { min, max },
+                    Some(0) => {
+                        return Err(NfError::InvalidParameter(
+                            "int multiple_of must be non-zero".into(),
+                        ))
+                    }
+                    Some(m) => {
+                        let step = i128::from(m).abs();
+                        // ceil(min / step) and floor(max / step) for any signs.
+                        let lo = -(-i128::from(min)).div_euclid(step);
+                        let hi = i128::from(max).div_euclid(step);
+                        if lo > hi {
+                            return Err(NfError::InvalidParameter(format!(
+                                "int: no multiple of {m} within [{min}, {max}]"
+                            )));
+                        }
+                        Provider::IntStep {
+                            lo: lo as i64,
+                            hi: hi as i64,
+                            step: step as i64,
+                        }
+                    }
+                }
             }
             "float" => {
                 let min = p_f64(params, "min", 0.0)?;
                 let max = p_f64(params, "max", 1000.0)?;
                 check_range(min, max, "float")?;
-                Provider::Float {
-                    min,
-                    max,
-                    decimals: p_opt_u32(params, "decimals")?,
+                let decimals = p_opt_u32(params, "decimals")?;
+                match (decimals, p_opt_f64(params, "multiple_of")?) {
+                    (None, None) => Provider::Float { min, max },
+                    (Some(d), None) => {
+                        float_grid(min, max, GridUnit::Div(10f64.powi(d as i32)), None)?
+                    }
+                    (d, Some(step)) if step > 0.0 => float_grid(min, max, GridUnit::Mul(step), d)?,
+                    (_, Some(step)) => {
+                        return Err(NfError::InvalidParameter(format!(
+                            "float multiple_of must be > 0, got {step}"
+                        )))
+                    }
                 }
             }
             "bool" => {
@@ -675,28 +860,47 @@ impl Provider {
                 let start = p_i64(params, "start", DEFAULT_DT_START_S * MICROS_PER_SEC)?;
                 let end = p_i64(params, "end", DEFAULT_DT_END_S * MICROS_PER_SEC)?;
                 check_range(start, end, "datetime")?;
-                let resolution = match p_str(params, "resolution")?.as_deref() {
-                    None | Some("s") | Some("second") | Some("seconds") => MICROS_PER_SEC,
-                    Some("ms") | Some("millisecond") | Some("milliseconds") => 1_000,
-                    Some("us") | Some("microsecond") | Some("microseconds") => 1,
-                    Some(other) => {
-                        return Err(NfError::InvalidParameter(format!(
-                            "resolution must be one of 's', 'ms', 'us', got {other:?}"
-                        )))
-                    }
-                };
+                let resolution = p_resolution(params)?;
+                let utc = p_bool(params, "utc", false)?;
                 if canonical(&lower) == "datetime" {
                     Provider::DateTime {
                         start,
                         end,
                         resolution,
+                        utc,
                     }
                 } else {
                     Provider::Iso8601 {
                         start,
                         end,
                         resolution,
+                        utc,
                     }
+                }
+            }
+            "time" => {
+                let start = p_i64(params, "start", 0)?;
+                let end = p_i64(params, "end", MICROS_PER_DAY - 1)?;
+                check_range(start, end, "time")?;
+                if start < 0 || end >= MICROS_PER_DAY {
+                    return Err(NfError::InvalidParameter(format!(
+                        "time: start/end must be microseconds within one day, got [{start}, {end}]"
+                    )));
+                }
+                Provider::Time {
+                    start,
+                    end,
+                    resolution: p_resolution(params)?,
+                }
+            }
+            "duration" => {
+                let min = p_i64(params, "min", 0)?;
+                let max = p_i64(params, "max", DEFAULT_DURATION_MAX_US)?;
+                check_range(min, max, "duration")?;
+                Provider::Duration {
+                    min,
+                    max,
+                    resolution: p_resolution(params)?,
                 }
             }
             "unix_time" => {
@@ -759,17 +963,39 @@ impl Provider {
         Ok(p)
     }
 
-    /// Wrap a string provider so values are truncated to `max_chars` characters.
-    pub fn truncated(inner: Provider, max_chars: usize) -> Result<Provider> {
+    /// Wrap a string provider so values stay within `[min_chars, max_chars]` characters.
+    ///
+    /// Out-of-range values are redrawn (keeping their meaning, e.g. a whole e-mail address)
+    /// up to [`FIT_ATTEMPTS`] times; the last draw is then truncated or padded with random
+    /// alphanumerics so the bounds always hold.
+    pub fn fit(inner: Provider, min_chars: usize, max_chars: Option<usize>) -> Result<Provider> {
+        if let Some(max) = max_chars {
+            check_range(min_chars, max, "string length")?;
+        }
         match inner.kind() {
-            Kind::Str | Kind::Cat => Ok(Provider::Truncated {
+            Kind::Str | Kind::Cat => Ok(Provider::Fit {
                 inner: Box::new(inner),
+                min_chars,
                 max_chars,
             }),
             other => Err(NfError::InvalidParameter(format!(
-                "max_length only applies to string providers, not {other:?} output"
+                "min_length/max_length only apply to string providers, not {other:?} output"
             ))),
         }
+    }
+
+    /// Whether every value has the same length (no point redrawing to fit a length).
+    fn fixed_length(&self) -> bool {
+        matches!(
+            self,
+            Provider::Pattern(_)
+                | Provider::Constant(_)
+                | Provider::Uuid4
+                | Provider::Uuid7
+                | Provider::HexColor
+                | Provider::Password { .. }
+                | Provider::IsoDate { .. }
+        )
     }
 
     fn parse_choice(params: &Params) -> Result<Provider> {
@@ -796,8 +1022,15 @@ impl Provider {
     pub fn kind(&self) -> Kind {
         use Provider::*;
         match self {
-            Int { .. } | Serial { .. } | UnixTime { .. } | ChoiceInt { .. } => Kind::Int,
-            Float { .. } | Price { .. } | Latitude | Longitude | ChoiceFloat { .. } => Kind::Float,
+            Int { .. } | IntStep { .. } | Serial { .. } | UnixTime { .. } | ChoiceInt { .. } => {
+                Kind::Int
+            }
+            Float { .. }
+            | FloatGrid { .. }
+            | Price { .. }
+            | Latitude
+            | Longitude
+            | ChoiceFloat { .. } => Kind::Float,
             Bool { .. } => Kind::Bool,
             FirstName
             | LastName
@@ -811,7 +1044,10 @@ impl Provider {
             | Word
             | ChoiceStr { .. } => Kind::Cat,
             Date { .. } => Kind::Date,
-            DateTime { .. } => Kind::Timestamp,
+            DateTime { utc: false, .. } => Kind::Timestamp,
+            DateTime { utc: true, .. } => Kind::TimestampUtc,
+            Time { .. } => Kind::Time,
+            Duration { .. } => Kind::Duration,
             _ => Kind::Str,
         }
     }
@@ -864,6 +1100,7 @@ impl Provider {
     fn gen_int<R: Rng>(&self, rng: &mut R, row: u64) -> i64 {
         match self {
             Provider::Int { min, max } => rng.range_i64(*min, *max),
+            Provider::IntStep { lo, hi, step } => rng.range_i64(*lo, *hi).wrapping_mul(*step),
             Provider::Serial { start, step } => {
                 start.wrapping_add((row as i64).wrapping_mul(*step))
             }
@@ -879,13 +1116,17 @@ impl Provider {
     #[inline]
     fn gen_float<R: Rng>(&self, rng: &mut R) -> f64 {
         match self {
-            Provider::Float { min, max, decimals } => {
-                let v = min + rng.unit_f64() * (max - min);
-                match decimals {
-                    Some(d) => round_to(v, *d).clamp(*min, *max),
-                    None => v,
-                }
+            Provider::Float { min, max } => {
+                // Interpolate without forming `max - min`, which overflows for huge ranges.
+                let u = rng.unit_f64();
+                (min * (1.0 - u) + max * u).clamp(*min, *max)
             }
+            Provider::FloatGrid {
+                lo,
+                hi,
+                unit,
+                decimals,
+            } => unit.value(rng.range_i64(*lo, *hi), *decimals),
             Provider::Price {
                 min_cents,
                 max_cents,
@@ -962,8 +1203,12 @@ impl Provider {
                 start,
                 end,
                 resolution,
+                utc,
             } => {
                 push_datetime(out, Self::gen_timestamp(rng, *start, *end, *resolution));
+                if *utc {
+                    out.push('Z');
+                }
             }
             Provider::Sentence {
                 min_words,
@@ -1006,17 +1251,40 @@ impl Provider {
                     rng.range_i64(i64::from(*start), i64::from(*end)) as i32,
                 );
             }
-            Provider::Truncated { inner, max_chars } => {
+            Provider::Fit {
+                inner,
+                min_chars,
+                max_chars,
+            } => {
                 let begin = out.len();
-                if inner.kind() == Kind::Cat {
-                    let table = inner.table(loc).expect("categorical provider has a table");
-                    let i = inner.gen_index(rng, table.len());
-                    out.push_str(table.get(i as usize));
+                let attempts = if inner.fixed_length() {
+                    1
                 } else {
-                    inner.write_str(rng, row, ctx, out);
+                    FIT_ATTEMPTS
+                };
+                for _ in 0..attempts {
+                    out.truncate(begin);
+                    if inner.kind() == Kind::Cat {
+                        let table = inner.table(loc).expect("categorical provider has a table");
+                        let i = inner.gen_index(rng, table.len());
+                        out.push_str(table.get(i as usize));
+                    } else {
+                        inner.write_str(rng, row, ctx, out);
+                    }
+                    let n = out[begin..].chars().count();
+                    if n >= *min_chars && max_chars.is_none_or(|m| n <= m) {
+                        return;
+                    }
                 }
-                if let Some((cut, _)) = out[begin..].char_indices().nth(*max_chars) {
-                    out.truncate(begin + cut);
+                if let Some(max) = max_chars {
+                    if let Some((cut, _)) = out[begin..].char_indices().nth(*max) {
+                        out.truncate(begin + cut);
+                    }
+                }
+                const ALNUM: &[u8] =
+                    b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+                for _ in out[begin..].chars().count()..*min_chars {
+                    out.push(*rng.pick(ALNUM) as char);
                 }
             }
             _ => unreachable!("not a string provider: {self:?}"),
@@ -1039,6 +1307,46 @@ fn weighted_index<R: Rng>(rng: &mut R, n: usize, cum: Option<&[f64]>) -> usize {
             cum.partition_point(|c| *c <= u).min(n - 1)
         }
     }
+}
+
+/// Build a [`Provider::FloatGrid`] whose values all lie within `[min, max]`.
+fn float_grid(min: f64, max: f64, unit: GridUnit, decimals: Option<u32>) -> Result<Provider> {
+    const LIMIT: f64 = 9_007_199_254_740_992.0; // 2^53: grid indices stay exact
+    let step = match unit {
+        GridUnit::Div(f) => 1.0 / f,
+        GridUnit::Mul(s) => s,
+    };
+    let (lo_f, hi_f) = ((min / step).ceil(), (max / step).floor());
+    if !(lo_f.abs() < LIMIT && hi_f.abs() < LIMIT) {
+        return Err(NfError::InvalidParameter(format!(
+            "float range [{min}, {max}] is too wide for a grid step of {step}"
+        )));
+    }
+    let (mut lo, mut hi) = (lo_f as i64, hi_f as i64);
+    // Repair floating-point error at the edges so every grid value is inside [min, max].
+    if unit.value(lo - 1, decimals) >= min {
+        lo -= 1;
+    }
+    while lo <= hi && unit.value(lo, decimals) < min {
+        lo += 1;
+    }
+    if unit.value(hi + 1, decimals) <= max {
+        hi += 1;
+    }
+    while hi >= lo && unit.value(hi, decimals) > max {
+        hi -= 1;
+    }
+    if lo > hi {
+        return Err(NfError::InvalidParameter(format!(
+            "float: no value on the requested grid (step {step}) within [{min}, {max}]"
+        )));
+    }
+    Ok(Provider::FloatGrid {
+        lo,
+        hi,
+        unit,
+        decimals,
+    })
 }
 
 #[inline]
@@ -1141,13 +1449,24 @@ pub fn generate_column<R: Rng>(
             }
             Data::Date(v)
         }
-        Kind::Timestamp => {
+        kind @ (Kind::Timestamp | Kind::TimestampUtc | Kind::Time | Kind::Duration) => {
             let (s, e, res) = match provider {
                 Provider::DateTime {
                     start,
                     end,
                     resolution,
+                    ..
+                }
+                | Provider::Time {
+                    start,
+                    end,
+                    resolution,
                 } => (*start, *end, *resolution),
+                Provider::Duration {
+                    min,
+                    max,
+                    resolution,
+                } => (*min, *max, *resolution),
                 _ => unreachable!(),
             };
             let mut v = Vec::with_capacity(len);
@@ -1158,7 +1477,12 @@ pub fn generate_column<R: Rng>(
                     v.push(Provider::gen_timestamp(rng, s, e, res));
                 }
             }
-            Data::Timestamp(v)
+            match kind {
+                Kind::Timestamp => Data::Timestamp(v),
+                Kind::TimestampUtc => Data::TimestampUtc(v),
+                Kind::Time => Data::Time(v),
+                _ => Data::Duration(v),
+            }
         }
         Kind::Str => {
             let mut offsets = Vec::with_capacity(len + 1);
@@ -1954,5 +2278,167 @@ mod tests {
                 assert_eq!(col.len(), 64, "{name} {code}");
             }
         }
+    }
+
+    fn params(pairs: &[(&str, Param)]) -> Params {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), v.clone()))
+            .collect()
+    }
+
+    fn floats(p: &Provider, n: usize) -> Vec<f64> {
+        let mut rng = chunk_rng(11, 0, 3);
+        match generate_column(p, &ctx("en_US"), &mut rng, 0, n, 0.0).data {
+            Data::Float(v) => v,
+            other => panic!("not a float column: {other:?}"),
+        }
+    }
+
+    fn ints(p: &Provider, n: usize) -> Vec<i64> {
+        let mut rng = chunk_rng(11, 0, 4);
+        match generate_column(p, &ctx("en_US"), &mut rng, 0, n, 0.0).data {
+            Data::Int(v) => v,
+            other => panic!("not an int column: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn float_decimals_stay_on_grid_and_in_bounds() {
+        // A lower bound just above zero (Pydantic `gt=0`) must never yield 0.0 or 5e-324.
+        let p = Provider::parse(
+            "float",
+            &params(&[
+                ("min", Param::Float(f64::from_bits(1))),
+                ("max", Param::Float(100.0)),
+                ("decimals", Param::Int(2)),
+            ]),
+        )
+        .unwrap();
+        for v in floats(&p, 200_000) {
+            assert!((0.01..=100.0).contains(&v), "{v}");
+            let s = format!("{v}");
+            assert!(s.split('.').nth(1).is_none_or(|f| f.len() <= 2), "{s}");
+        }
+        // 0.15 is representable with one decimal, so it must stay a valid lower bound.
+        let p = Provider::parse(
+            "float",
+            &params(&[
+                ("min", Param::Float(0.15)),
+                ("max", Param::Float(0.45)),
+                ("decimals", Param::Int(1)),
+            ]),
+        )
+        .unwrap();
+        let vs = floats(&p, 10_000);
+        assert!(
+            vs.iter().all(|v| [0.2, 0.3, 0.4].contains(v)),
+            "{:?}",
+            &vs[..5]
+        );
+        let err = Provider::parse(
+            "float",
+            &params(&[
+                ("min", Param::Float(0.11)),
+                ("max", Param::Float(0.19)),
+                ("decimals", Param::Int(1)),
+            ]),
+        );
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn multiple_of_grids() {
+        let p = Provider::parse(
+            "int",
+            &params(&[
+                ("min", Param::Int(-17)),
+                ("max", Param::Int(42)),
+                ("multiple_of", Param::Int(5)),
+            ]),
+        )
+        .unwrap();
+        let vs = ints(&p, 10_000);
+        assert!(vs.iter().all(|v| v % 5 == 0 && (-15..=40).contains(v)));
+        assert!(vs.contains(&-15) && vs.contains(&40));
+        let p = Provider::parse(
+            "float",
+            &params(&[
+                ("min", Param::Float(0.0)),
+                ("max", Param::Float(1.0)),
+                ("multiple_of", Param::Float(0.1)),
+                ("decimals", Param::Int(1)),
+            ]),
+        )
+        .unwrap();
+        for v in floats(&p, 10_000) {
+            assert!((0.0..=1.0).contains(&v));
+            assert!(format!("{v}").len() <= 3, "{v}");
+        }
+        assert!(Provider::parse(
+            "int",
+            &params(&[
+                ("min", Param::Int(1)),
+                ("max", Param::Int(4)),
+                ("multiple_of", Param::Int(5)),
+            ]),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn fit_keeps_meaning_and_bounds() {
+        // Redraws keep whole e-mail addresses rather than cutting them.
+        let p = Provider::fit(Provider::Email, 5, Some(22)).unwrap();
+        for e in strings(&p, "en_US", 5_000) {
+            let n = e.chars().count();
+            assert!((5..=22).contains(&n), "{e}");
+        }
+        let whole = strings(&p, "en_US", 5_000)
+            .iter()
+            .filter(|e| e.contains('@') && e.contains('.'))
+            .count();
+        assert!(whole > 4_900, "{whole}");
+        // Impossible minimum (2-letter codes, min 3): padded, never shorter.
+        let p = Provider::fit(Provider::CountryCode, 3, Some(3)).unwrap();
+        for c in strings(&p, "en_US", 1_000) {
+            assert_eq!(c.chars().count(), 3, "{c}");
+        }
+        // Multi-byte characters are counted as characters, not bytes.
+        let p = Provider::fit(Provider::Name, 0, Some(3)).unwrap();
+        for n in strings(&p, "ja_JP", 1_000) {
+            assert!(n.chars().count() <= 3, "{n}");
+        }
+        assert!(Provider::fit(Provider::Int { min: 0, max: 1 }, 0, Some(2)).is_err());
+        assert!(Provider::fit(Provider::Email, 9, Some(3)).is_err());
+    }
+
+    #[test]
+    fn time_and_duration_formatting() {
+        let mut s = String::new();
+        push_time(&mut s, 0);
+        assert_eq!(s, "00:00:00");
+        s.clear();
+        push_time(&mut s, MICROS_PER_DAY - 1);
+        assert_eq!(s, "23:59:59.999999");
+        for (us, want) in [
+            (0, "PT0S"),
+            (1_500_000, "PT1.500000S"),
+            (86_400_000_000, "P1D"),
+            (90_061_000_000, "P1DT1H1M1S"),
+            (3_600_000_000, "PT1H"),
+            (-60_000_000, "-PT1M"),
+        ] {
+            s.clear();
+            push_duration(&mut s, us);
+            assert_eq!(s, want, "{us}");
+        }
+        let p = Provider::parse("time", &Params::new()).unwrap();
+        assert_eq!(p.kind(), Kind::Time);
+        let p = Provider::parse("timedelta", &Params::new()).unwrap();
+        assert_eq!(p.kind(), Kind::Duration);
+        let p = Provider::parse("datetime", &params(&[("utc", Param::Bool(true))])).unwrap();
+        assert_eq!(p.kind(), Kind::TimestampUtc);
+        assert!(Provider::parse("time", &params(&[("end", Param::Int(MICROS_PER_DAY))])).is_err());
     }
 }

@@ -4,7 +4,8 @@
 
 | Version | Supported |
 |---------|-----------|
-| 0.1.x   | ✅        |
+| 1.0.x   | ✅        |
+| 0.1.x   | ❌        |
 
 ## Reporting a vulnerability
 
@@ -44,12 +45,12 @@ wheel and the sdist carry two independent, Sigstore-signed provenance records:
   ```bash
   pip install pypi-attestations
   pypi-attestations verify pypi --repository https://github.com/chetanxrathore/nextfake \
-      pypi:nextfake-0.1.0-cp310-abi3-macosx_11_0_arm64.whl
+      pypi:nextfake-1.0.0-cp310-abi3-macosx_11_0_arm64.whl
   ```
 
 * **GitHub build provenance** (SLSA), for any downloaded file:
 
   ```bash
-  pip download nextfake==0.1.0 --no-deps -d dist
+  pip download nextfake==1.0.0 --no-deps -d dist
   gh attestation verify dist/nextfake-*.whl --repo chetanxrathore/nextfake
   ```
