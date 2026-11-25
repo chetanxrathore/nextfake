@@ -8,6 +8,7 @@ and writes straight to Arrow, Polars, Pandas, Parquet, CSV and JSONL at millions
 
 [![CI](https://github.com/chetanxrathore/nextfake/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/chetanxrathore/nextfake/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)
+[![Downloads](https://img.shields.io/pypi/dm/nextfake)](https://pypistats.org/packages/nextfake)
 ![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-green)
 ![Typed](https://img.shields.io/badge/typing-mypy%20--strict-informational)
 
